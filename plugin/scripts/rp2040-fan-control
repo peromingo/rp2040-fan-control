@@ -1,0 +1,161 @@
+#!/bin/sh
+# Development service wrapper for the RP2040 fan-control daemon.
+# Intentionally disabled unless the operator creates the ENABLE marker.
+set -eu
+
+PLUGIN_DIR="/boot/config/plugins/rp2040-fan-control"
+APP_DIR="$PLUGIN_DIR/app"
+DAEMON="$APP_DIR/rp2040_fan_control_webui_dev.py"
+LOCAL_CONFIG="$APP_DIR/fan_control/site_config_local.py"
+ENABLE_MARKER="$PLUGIN_DIR/ENABLE"
+PID_FILE="/var/run/rp2040-fan-control/daemon.pid"
+RUNTIME_DIR="/var/run/rp2040-fan-control"
+LOG_DIR="$PLUGIN_DIR/logs"
+PYTHON_CONFIG="$PLUGIN_DIR/python-path"
+if [ -n "${RP2040_PYTHON:-}" ]; then
+    PYTHON="$RP2040_PYTHON"
+elif [ -r "$PYTHON_CONFIG" ]; then
+    IFS= read -r PYTHON < "$PYTHON_CONFIG" || true
+    case "${PYTHON:-}" in
+        /*) ;;
+        *) PYTHON="" ;;
+    esac
+else
+    PYTHON="$(command -v python3 || true)"
+fi
+
+say() { printf '%s\n' "rp2040-fan-control: $*"; }
+
+is_our_pid() {
+    pid="$1"
+    [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\000' ' ' < "/proc/$pid/cmdline" | grep -F -- "$DAEMON" >/dev/null 2>&1
+}
+
+read_pid() {
+    [ -r "$PID_FILE" ] || return 1
+    IFS= read -r PID < "$PID_FILE" || true
+    case "${PID:-}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    printf '%s\n' "$PID"
+}
+
+check_dependencies() {
+    failed=0
+    if [ -n "$PYTHON" ] && [ -x "$PYTHON" ]; then
+        say "Python: $PYTHON"
+        "$PYTHON" --version 2>&1 || failed=1
+        if "$PYTHON" -c 'import serial; print("pyserial:", getattr(serial, "__version__", "version desconocida"))' 2>&1; then
+            :
+        else
+            say "pyserial no está disponible en el intérprete seleccionado"
+            failed=1
+        fi
+    else
+        say "no se encuentra un intérprete Python ejecutable; configure $PYTHON_CONFIG o RP2040_PYTHON"
+        failed=1
+    fi
+    if command -v smartctl >/dev/null 2>&1; then
+        say "smartctl: $(command -v smartctl)"
+    else
+        say "no se encuentra smartctl"
+        failed=1
+    fi
+    return "$failed"
+}
+
+start_service() {
+    [ "$(id -u)" -eq 0 ] || { say 'debe ejecutarse como root'; return 1; }
+    [ -f "$ENABLE_MARKER" ] || { say 'servicio desactivado; cree ENABLE solo después de configurar y revisar el sistema'; return 0; }
+    [ -f "$DAEMON" ] || { say "no se encuentra el daemon: $DAEMON"; return 1; }
+    [ -f "$LOCAL_CONFIG" ] || { say "falta configuración local: $LOCAL_CONFIG"; return 1; }
+    if grep -q 'REPLACE_WITH_' "$LOCAL_CONFIG"; then
+        say 'la configuración todavía contiene marcadores REPLACE_WITH_; no se inicia'
+        return 1
+    fi
+    check_dependencies || { say 'faltan dependencias; el servicio no se inicia'; return 1; }
+
+    [ ! -L "$RUNTIME_DIR" ] || { say "el directorio IPC es un enlace simbólico; se rechaza"; return 1; }
+    if [ ! -e "$RUNTIME_DIR" ]; then
+        (umask 027; mkdir -p "$RUNTIME_DIR") || { say "no se pudo crear el directorio IPC"; return 1; }
+        chmod 0750 "$RUNTIME_DIR"
+    else
+        [ -d "$RUNTIME_DIR" ] || { say "la ruta IPC existe y no es un directorio"; return 1; }
+        owner="$(stat -c '%u' "$RUNTIME_DIR" 2>/dev/null)" || { say "no se pudo verificar el propietario del IPC"; return 1; }
+        mode="$(stat -c '%a' "$RUNTIME_DIR" 2>/dev/null)" || { say "no se pudieron verificar los permisos del IPC"; return 1; }
+        [ "$owner" = 0 ] || { say "el directorio IPC existente no pertenece a root; se rechaza"; return 1; }
+        case "$mode" in
+            *[2367]|*[2367][0-7]) say "el directorio IPC existente permite escritura global; corríjalo manualmente"; return 1 ;;
+        esac
+    fi
+    mkdir -p "$LOG_DIR"
+    # No cambia permisos/propietario de un directorio existente. Si PHP no
+    # tiene acceso, los controles de la WebUI deben permanecer deshabilitados.
+    if old_pid="$(read_pid 2>/dev/null)" && is_our_pid "$old_pid"; then
+        say "ya está iniciado (PID $old_pid)"
+        return 0
+    fi
+    rm -f "$PID_FILE"
+
+    # Use a persistent log directory and import the staged package from APP_DIR.
+    export PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+    export RP2040_BASE_DIR="$PLUGIN_DIR"
+    export RP2040_LOG_DIR="$LOG_DIR"
+    nohup "$PYTHON" "$DAEMON" >> "$LOG_DIR/daemon-console.log" 2>&1 </dev/null &
+    pid=$!
+    umask 077
+    printf '%s\n' "$pid" > "$PID_FILE"
+    sleep 1
+    if is_our_pid "$pid"; then
+        say "iniciado (PID $pid)"
+        return 0
+    fi
+    rm -f "$PID_FILE"
+    say 'el proceso terminó al arrancar; revise daemon-console.log'
+    return 1
+}
+
+stop_service() {
+    if ! pid="$(read_pid 2>/dev/null)"; then
+        # Runtime directory may not exist yet on first install or after reboot.
+        rm -f "$PID_FILE" 2>/dev/null || true
+        say 'no hay PID registrado'
+        return 0
+    fi
+    if ! is_our_pid "$pid"; then
+        rm -f "$PID_FILE"
+        say 'PID obsoleto o perteneciente a otro proceso; no se envió señal'
+        return 0
+    fi
+    kill -TERM "$pid"
+    count=0
+    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        say "el proceso $pid no terminó tras SIGTERM; no se fuerza SIGKILL"
+        return 1
+    fi
+    rm -f "$PID_FILE"
+    say 'detenido'
+}
+
+status_service() {
+    if pid="$(read_pid 2>/dev/null)" && is_our_pid "$pid"; then
+        say "en ejecución (PID $pid)"
+        return 0
+    fi
+    say 'detenido'
+    return 1
+}
+
+case "${1:-}" in
+    start) start_service ;;
+    stop) stop_service ;;
+    restart) stop_service; start_service ;;
+    status) status_service ;;
+    check-deps) check_dependencies ;;
+    *) echo "Uso: $0 {start|stop|restart|status|check-deps}" >&2; exit 2 ;;
+esac

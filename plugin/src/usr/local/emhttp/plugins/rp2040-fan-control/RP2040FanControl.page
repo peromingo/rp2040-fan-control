@@ -1,0 +1,8 @@
+Menu="Settings:95"
+Name="RP2040 Fan Control"
+Icon="fan"
+Version="0.3.0-dev"
+
+<?php
+include __DIR__ . '/pages/index.php';
+?>
