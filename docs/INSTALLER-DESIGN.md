@@ -41,7 +41,7 @@ This remains pre-release. The rendered `.plg` must not be produced with guessed 
 
 ## Runtime dependencies and IPC permissions
 
-The service wrapper currently requires an executable `python3`, importable `pyserial`, and `smartctl`. The installer does not install Python or pip packages; dependency provisioning must be documented and validated for the selected Unraid version before release. Existing IPC directories are no longer chmodded automatically: a newly created directory receives mode 0750, while an existing directory must be root-owned and not world-writable or the wrapper refuses to start. This still does not prove that PHP/emhttp can publish commands; that must be tested on the target Unraid release.
+The service wrapper currently requires an executable `python3`, importable `pyserial`, and `smartctl`. The installer does not install Python or run pip on Unraid. The build process bundles the pinned `pyserial` dependency under the persistent app's `vendor/` directory; the wrapper prepends that path for dependency checks and daemon execution. Python itself and `smartctl` remain external prerequisites and must be validated for the selected Unraid version before release. Existing IPC directories are no longer chmodded automatically: a newly created directory receives mode 0750, while an existing directory must be root-owned and not world-writable or the wrapper refuses to start. This still does not prove that PHP/emhttp can publish commands; that must be tested on the target Unraid release.
 
 
 ## Dependency preflight (development)
