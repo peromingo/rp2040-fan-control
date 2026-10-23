@@ -101,6 +101,28 @@ class RuntimeIPCTests(unittest.TestCase):
         self.assertIsNone(self.ipc.take_mode_request())
         self.assertFalse(json.loads(self.ipc.result_path.read_text())["ok"])
 
+    def test_non_finite_request_timestamps_are_rejected(self):
+        for invalid_timestamp in (
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        ):
+            with self.subTest(created_at=invalid_timestamp):
+                request = {
+                    "schema_version": 1,
+                    "request_id": "req_12345678",
+                    "created_at": invalid_timestamp,
+                    "action": "set_mode",
+                    "mode": "AUTO",
+                }
+    
+                self.ipc.command_path.write_text(json.dumps(request))
+    
+                self.assertIsNone(self.ipc.take_mode_request())
+    
+                result = json.loads(self.ipc.result_path.read_text())
+                self.assertFalse(result["ok"])
+    
     def test_unknown_action_is_rejected(self):
         request = {"schema_version": 1, "request_id": "req_12345678",
                    "created_at": time.time(), "action": "shell", "mode": "AUTO"}
