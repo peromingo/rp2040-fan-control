@@ -8,26 +8,28 @@
 
 import os
 import time
-import fcntl
 
-LOCK_FILE = os.environ.get("RP2040_LOCK_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rp2040_fan_control.lock"))
+from fan_control.instance_lock import acquire_instance_lock as _acquire_instance_lock
+
+# Stable runtime path: never place the lock inside the replaceable app directory.
+LOCK_FILE = os.environ.get(
+    "RP2040_LOCK_FILE", "/var/run/rp2040-fan-control/daemon.lock"
+)
 _instance_lock = None
+
 
 def acquire_instance_lock():
     global _instance_lock
 
-    _instance_lock = open(LOCK_FILE, "w")
-
     try:
-        fcntl.flock(_instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        _instance_lock.close()
-        _instance_lock = None
-        print("V3.0 ya esta en ejecucion; segunda instancia abortada.")
+        _instance_lock = _acquire_instance_lock(LOCK_FILE)
+    except OSError as exc:
+        print("No se pudo adquirir el bloqueo del daemon: %s" % exc)
         return False
 
-    _instance_lock.write("%d\n" % os.getpid())
-    _instance_lock.flush()
+    if _instance_lock is None:
+        print("V3.0 ya esta en ejecucion; segunda instancia abortada.")
+        return False
     return True
 
 
