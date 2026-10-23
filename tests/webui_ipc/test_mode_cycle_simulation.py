@@ -38,12 +38,17 @@ class ModeCycleSimulationTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_one_cycle(self, serial):
+    def run_one_cycle(self, serial, current_mode="AUTO"):
         request = self.ipc.take_mode_request()
         self.assertIsNotNone(request)
-        current_mode = request["mode"]
-        packet = "TEST FAN COMMAND!MODE|%s@100,100\\n" % current_mode
+        mode_before_request = current_mode
+        requested_mode = request["mode"]
+        packet = "TEST FAN COMMAND!MODE|%s@100,100\\n" % requested_mode
         tx_ok = serial.send(packet)
+        if not tx_ok or serial.fail_safe:
+            current_mode = mode_before_request
+        else:
+            current_mode = requested_mode
         acknowledge_transmitted_mode(
             self.ipc, request, current_mode, tx_ok, serial.fail_safe
         )
@@ -62,14 +67,15 @@ class ModeCycleSimulationTests(unittest.TestCase):
     def test_cycle_reports_failure_when_fake_serial_send_fails(self):
         serial = FakeSerialManager(send_result=False, fail_safe=True)
         mode, result = self.run_one_cycle(serial)
-        self.assertEqual(mode, "SILENT")
+        self.assertEqual(mode, "AUTO")
         self.assertEqual(len(serial.packets), 1)
         self.assertFalse(result["ok"])
         self.assertNotIn("applied_mode", result)
 
     def test_cycle_reports_failure_in_failsafe_even_if_send_returns_true(self):
         serial = FakeSerialManager(send_result=True, fail_safe=True)
-        _, result = self.run_one_cycle(serial)
+        mode, result = self.run_one_cycle(serial)
+        self.assertEqual(mode, "AUTO")
         self.assertFalse(result["ok"])
 
 
