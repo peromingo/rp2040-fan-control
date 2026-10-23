@@ -46,7 +46,7 @@ check_dependencies() {
     if [ -n "$PYTHON" ] && [ -x "$PYTHON" ]; then
         say "Python: $PYTHON"
         "$PYTHON" --version 2>&1 || failed=1
-        if "$PYTHON" -c 'import serial; print("pyserial:", getattr(serial, "__version__", "version desconocida"))' 2>&1; then
+        if PYTHONPATH="$APP_DIR/vendor:$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c 'import serial; print("pyserial:", getattr(serial, "__version__", "version desconocida"))' 2>&1; then
             :
         else
             say "pyserial no está disponible en el intérprete seleccionado"
@@ -99,7 +99,7 @@ start_service() {
     rm -f "$PID_FILE"
 
     # Use a persistent log directory and import the staged package from APP_DIR.
-    export PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+    export PYTHONPATH="$APP_DIR/vendor:$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
     export RP2040_BASE_DIR="$PLUGIN_DIR"
     export RP2040_LOG_DIR="$LOG_DIR"
     nohup "$PYTHON" "$DAEMON" >> "$LOG_DIR/daemon-console.log" 2>&1 </dev/null &
