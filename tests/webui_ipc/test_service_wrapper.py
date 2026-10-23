@@ -39,6 +39,7 @@ class ServiceWrapperSafetyTests(unittest.TestCase):
 
     def test_requires_dependencies_before_start(self):
         self.assertIn("import serial", self.source)
+        self.assertIn('PYTHONPATH="$APP_DIR/vendor:$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"', self.source)
         self.assertIn('command -v smartctl', self.source)
         self.assertIn('check_dependencies ||', self.source)
 
