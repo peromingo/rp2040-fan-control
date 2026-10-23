@@ -32,6 +32,15 @@ class ServiceWrapperSafetyTests(unittest.TestCase):
         self.assertLess(chmod_line, existing_owner_check)
         self.assertIn('el directorio IPC existente permite escritura global', self.source)
 
+    def test_daemon_lock_uses_stable_runtime_path(self):
+        self.assertIn('export RP2040_LOCK_FILE="$RUNTIME_DIR/daemon.lock"', self.source)
+        self.assertNotIn('rp2040_fan_control.lock', self.source)
+
+    def test_pid_file_is_written_with_private_permissions(self):
+        umask_line = self.source.index("    umask 077")
+        pid_write = self.source.index('printf \'%s\\n\' "$pid" > "$PID_FILE"')
+        self.assertLess(umask_line, pid_write)
+
     def test_stop_checks_process_identity_before_signal(self):
         self.assertIn('is_our_pid "$pid"', self.source)
         self.assertIn('kill -TERM "$pid"', self.source)
