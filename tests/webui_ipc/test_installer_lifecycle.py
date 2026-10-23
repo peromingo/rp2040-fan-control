@@ -66,6 +66,12 @@ class InstallerLifecycleTests(unittest.TestCase):
         for path in (persistent, web_parent, sbin):
             path.mkdir(parents=True, exist_ok=True)
         replacements = [
+            # This fixture runs only against temporary directories. Bypass the
+            # production root guard in the copied script so lifecycle behavior
+            # can be tested by unprivileged CI; a separate test asserts that the
+            # shipped installer still requires root.
+            ('[ "$(id -u)" -eq 0 ] || { echo \'installer must run as root\' >&2; exit 1; }',
+             ': # root guard bypassed only in isolated test fixture'),
             ("PLUGIN_DIR=/boot/config/plugins/rp2040-fan-control", f'PLUGIN_DIR="{persistent}"'),
             ("WEB_ROOT=/usr/local/emhttp/plugins", f'WEB_ROOT="{web_parent}"'),
             ("PLUGIN_SBIN=/usr/local/sbin", f'PLUGIN_SBIN="{sbin}"'),
