@@ -55,3 +55,13 @@ jobs:
         run: |
           ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-b
           cmp dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz dist/ci-b/rp2040-fan-control-0.6.0-ci-payload.tar.gz
+      - name: Upload isolated-VM test payload
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rp2040-fan-control-ci-payload
+          path: |
+            dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz
+            dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
