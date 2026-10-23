@@ -26,7 +26,6 @@ def acquire_instance_lock(lock_file):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            os.close(fd)
             return None
 
         stream = os.fdopen(fd, "r+", encoding="ascii")
