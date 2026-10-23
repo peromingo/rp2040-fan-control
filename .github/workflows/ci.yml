@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: none
+      - name: Python syntax
+        run: PYTHONPYCACHEPREFIX=/tmp/rp2040-pycache python -m compileall -q src tests tools
+      - name: Unit and integration-contract tests
+        env:
+          PYTHONPATH: src/unraid
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s tests -v
+      - name: Publication source audit
+        run: python tools/audit_publication.py .
+      - name: PHP syntax
+        run: php -l plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php
+      - name: Shell syntax
+        run: sh -n plugin/scripts/rp2040-fan-control plugin/scripts/install-from-payload.sh tools/build_unraid_payload.sh
+      - name: Build payload and verify checksum
+        run: |
+          ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-a
+          (cd dist/ci-a && sha256sum -c rp2040-fan-control-0.6.0-ci-payload.tar.gz.sha256)
+          python tools/audit_publication.py --payload dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz
+      - name: Verify deterministic payload
+        run: |
+          ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-b
+          cmp dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz dist/ci-b/rp2040-fan-control-0.6.0-ci-payload.tar.gz
