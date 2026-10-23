@@ -42,8 +42,7 @@ Las pruebas de ciclo usan un `SerialManager` simulado y directorios temporales; 
 
 El paquete incluye una página experimental para Unraid y un adaptador IPC JSON. La página muestra estado, temperaturas y comandos FAN1/FAN2, y permite solicitar los modos AUTO/SILENT/TURBO. La confirmación solo indica que el daemon aceptó la solicitud y transmitió el paquete por serie; el firmware actual no devuelve ACK.
 
-Esta función todavía no es instalable: falta el `.plg` real, la configuración persistente completa, validar permisos en una versión concreta de Unraid y ejecutar pruebas de integración aisladas. El daemon integrado `src/unraid/rp2040_fan_control_webui_dev.py` es exclusivamente una copia de desarrollo y no debe desplegarse en producción.
-
+La integración WebUI/IPC dispone de una plantilla de plugin (plugin/rp2040-fan-control.plg.in), un generador de .plg y un instalador del paquete. Todavía no existe una versión instalable validada para producción: faltan la publicación de los artefactos con URLs y SHA-256 reales, la validación de permisos en una versión concreta de Unraid y las pruebas aisladas de instalación, actualización, recuperación y desinstalación. El daemon integrado src/unraid/rp2040_fan_control_webui_dev.py sigue siendo una copia de desarrollo y no debe desplegarse en producción.
 
 ### Validación del prototipo WebUI/IPC
 
