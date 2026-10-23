@@ -7,6 +7,7 @@ must be best-effort; it must never interrupt fan control.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -153,7 +154,13 @@ class RuntimeIPC:
             created_at = request.get("created_at")
             if isinstance(created_at, bool) or not isinstance(created_at, (int, float)):
                 raise ValueError("Marca temporal no válida.")
-            age = time.time() - float(created_at)
+            try:
+                created_at_value = float(created_at)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError("Marca temporal no válida.") from exc
+            if not math.isfinite(created_at_value):
+                raise ValueError("Marca temporal no válida.")
+            age = time.time() - created_at_value
             if age < -5 or age > self.request_max_age:
                 raise ValueError("Solicitud caducada o con hora futura.")
             if request.get("action") != "set_mode":
