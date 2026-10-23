@@ -45,6 +45,12 @@ jobs:
           ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-a
           (cd dist/ci-a && sha256sum -c rp2040-fan-control-0.6.0-ci-payload.tar.gz.sha256)
           python tools/audit_publication.py --payload dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz
+      - name: Verify bundled pyserial import from payload
+        run: |
+          mkdir -p /tmp/rp2040-payload-check
+          tar -xzf dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz -C /tmp/rp2040-payload-check
+          test -f /tmp/rp2040-payload-check/usr/local/share/rp2040-fan-control/app/vendor/serial/__init__.py
+          PYTHONPATH="/tmp/rp2040-payload-check/usr/local/share/rp2040-fan-control/app/vendor" python -c 'import serial; assert serial.__version__ == "3.5", serial.__version__; print("Bundled pyserial:", serial.__version__)'
       - name: Verify deterministic payload
         run: |
           ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-b
