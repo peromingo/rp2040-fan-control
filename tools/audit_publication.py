@@ -30,6 +30,11 @@ def audit_tree(root: Path) -> list[str]:
         return [f"not a directory: {root}"]
     for path in root.rglob("*"):
         rel = path.relative_to(root)
+        # GitHub Actions checks out a repository with its own .git metadata.
+        # Ignore only the root checkout metadata; nested .git directories remain
+        # forbidden, and release payloads are still audited independently.
+        if rel.parts and rel.parts[0] == ".git":
+            continue
         if any(part in FORBIDDEN_DIRS for part in rel.parts):
             issues.append(f"forbidden directory/artifact path: {rel.as_posix()}")
             continue
