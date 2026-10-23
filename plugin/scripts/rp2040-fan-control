@@ -102,6 +102,7 @@ start_service() {
     export PYTHONPATH="$APP_DIR/vendor:$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
     export RP2040_BASE_DIR="$PLUGIN_DIR"
     export RP2040_LOG_DIR="$LOG_DIR"
+    export RP2040_LOCK_FILE="$RUNTIME_DIR/daemon.lock"
     nohup "$PYTHON" "$DAEMON" >> "$LOG_DIR/daemon-console.log" 2>&1 </dev/null &
     pid=$!
     umask 077
