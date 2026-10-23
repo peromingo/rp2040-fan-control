@@ -861,12 +861,16 @@ def main():
         # Solicitudes del panel: se aplican dentro del bucle del daemon.
         # Se procesan después de los botones físicos del RP2040, por lo que
         # una solicitud web válida tiene prioridad durante este ciclo.
+        mode_before_web_request = None
         if runtime_ipc is not None:
             try:
                 request = runtime_ipc.take_mode_request()
                 if request is not None:
                     requested_mode = request["mode"]
                     if requested_mode in (MODE_AUTO, MODE_SILENT, MODE_TURBO):
+                        # Keep the physical-button mode as rollback state until
+                        # the serial write succeeds outside fail-safe.
+                        mode_before_web_request = CURRENT_MODE
                         CURRENT_MODE = requested_mode
                         pending_mode_request = request
                         log_info(LOGGER, "CONTROL", "MODE solicitado desde panel: %s" % CURRENT_MODE)
@@ -1117,6 +1121,13 @@ def main():
         )
 
         tx_ok = serial_manager.send(packet)
+        mode_transmission_ok = tx_ok and not serial_manager.fail_safe
+        if pending_mode_request is not None and not mode_transmission_ok:
+            # A failed write must not leave the requested web mode as the
+            # daemon's logical state. Preserve any physical-button change.
+            if mode_before_web_request is not None:
+                CURRENT_MODE = mode_before_web_request
+
         if not tx_ok:
 
             log_warning(
