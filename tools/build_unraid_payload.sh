@@ -23,6 +23,11 @@ cp "$ROOT/src/unraid/rp2040_fan_control_webui_dev.py" "$APP/"
 cp "$ROOT/src/unraid/fan_control/"*.py "$APP/fan_control/"
 rm -f "$APP/fan_control/site_config_local.py"
 cp "$ROOT/src/unraid/fan_control/site_config.example.py" "$APP/fan_control/"
+
+# Bundle pinned pyserial into the persistent app payload; Unraid never runs pip.
+# CI/build host must have Python 3 and pip available.
+python3 -m pip install --disable-pip-version-check --no-compile --no-deps \
+  --requirement "$ROOT/requirements.txt" --target "$APP/vendor"
 cp "$ROOT/plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page" "$PLUGIN/"
 cp "$ROOT/plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php" "$PLUGIN/pages/"
 cp "$ROOT/plugin/scripts/rp2040-fan-control" "$SBIN/"
