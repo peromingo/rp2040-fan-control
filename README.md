@@ -47,7 +47,8 @@ Esta función todavía no es instalable: falta el `.plg` real, la configuración
 
 ### Validación del prototipo WebUI/IPC
 
-Las pruebas de desarrollo cubren validación de solicitudes, prevención de repetición, publicación PHP concurrente, compatibilidad del JSON PHP→Python, permisos no world-writable y confirmación condicionada a la transmisión serie. En la última validación local pasan 53 pruebas, incluidas pruebas del auditor estructural de publicación. El workflow de CI repetirá las pruebas en Python 3.11 y 3.12; aún no se ha ejecutado en GitHub. Esto no sustituye una prueba en una VM de Unraid ni valida los permisos reales de emhttp.
+Las pruebas de desarrollo cubren la validación de solicitudes, la prevención de repetición, la publicación PHP concurrente, la compatibilidad del JSON PHP→Python, los permisos no world-writable y la confirmación condicionada a la transmisión serie. El workflow de GitHub Actions ejecuta estas comprobaciones en Python 3.11 y 3.12, además de validar la sintaxis PHP y Shell, auditar los archivos de publicación y comprobar la generación reproducible del paquete. Antes de integrar cambios, debe verificarse que todos los trabajos de la última ejecución relevante hayan terminado correctamente. Una CI satisfactoria no sustituye las pruebas en una VM de Unraid ni valida los permisos reales de emhttp.
+
 
 ### Wrapper de servicio (borrador)
 
