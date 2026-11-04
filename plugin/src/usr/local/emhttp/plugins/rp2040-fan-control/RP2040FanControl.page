@@ -1,8 +1,11 @@
-Menu="Settings:95"
-Name="RP2040 Fan Control"
-Icon="fan"
-Version="0.3.0-dev"
-
+Menu="Utilities"
+Type="menu"
+Icon="cog"
+Title="RP2040 Fan Control"
+Tag="fan"
+Markdown="false"
+Eval="true"
+---
 <?php
-include __DIR__ . '/pages/index.php';
+include '/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php';
 ?>
