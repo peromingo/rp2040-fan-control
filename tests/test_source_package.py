@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from tools.build_integration_plg import build, collect_files, payload_bytes, render_plg, verify, APP
+from tools.build_integration_plg import build, collect_files, payload_bytes, render_plg, verify, digest, APP, ROOT, PLG_NAME
 
 WHEEL = os.environ.get('RP2040_TEST_WHEEL')
 
@@ -14,6 +14,12 @@ class SourcePackageTests(unittest.TestCase):
             first, second = build(a, WHEEL), build(b, WHEEL)
             self.assertEqual(first.read_bytes(), second.read_bytes())
             self.assertGreater(verify(first, WHEEL), 0)
+
+    def test_committed_review_package_and_checksum_match_sources(self):
+        path = ROOT / 'plugin/candidates/source-rc1' / PLG_NAME
+        self.assertGreater(verify(path, WHEEL), 0)
+        expected = Path(str(path) + '.sha256').read_text().split()[0]
+        self.assertEqual(digest(path.read_bytes()), expected)
 
     def test_changed_payload_is_rejected_even_with_valid_embedded_hash(self):
         files = collect_files(WHEEL)
