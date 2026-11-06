@@ -2,14 +2,14 @@
 
 Development controller and WebUI for RP2040 fan control. The firmware does not return serial ACK: a successful command confirms daemon acceptance and a completed serial write, not measured fan RPM.
 
-The source-built review candidate is **0.8.0-source-rc1**. Its runtime combines persistent JSON disk/CPU assignments, serial-port selection, live WebUI, source warnings and opt-in boot startup with protected instance locking and Python interpreter diagnostics. It is not a stable release; this consolidated runtime requires target validation.
+The source-built review candidate is **0.8.0-source-rc2**. Its runtime combines persistent JSON disk/CPU assignments, serial-port selection, live WebUI, source warnings and opt-in boot startup with protected instance locking and Python interpreter diagnostics. It is not a stable release; this consolidated runtime requires target validation.
 
 ## Build the installable review PLG
 
 With Python 3.11 or newer:
 
 ```sh
-python3 tools/build_integration_plg.py /tmp/rp2040-source-rc1
+python3 tools/build_integration_plg.py /tmp/rp2040-source-rc2
 ```
 
 The builder downloads the official pyserial 3.5 wheel if necessary and checks its pinned SHA-256 before packaging. For an offline build, supply `--wheel /path/to/pyserial-3.5-py2.py3-none-any.whl`. No pip installation is performed on Unraid.
@@ -19,9 +19,9 @@ Outputs include the self-contained `.plg`, its `.sha256`, `payload.tar.gz`, and 
 The legacy `rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg` basename is deliberately retained for the existing integration-plugin upgrade path. The internal version identifies the candidate. Do not install additional copies under alternative basenames.
 
 ```sh
-python3 tools/build_integration_plg.py /tmp/rp2040-source-rc1 \
+python3 tools/build_integration_plg.py /tmp/rp2040-source-rc2 \
   --wheel /path/to/pyserial-3.5-py2.py3-none-any.whl \
-  --verify /tmp/rp2040-source-rc1/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
+  --verify /tmp/rp2040-source-rc2/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
 ```
 
 ## Development checks
@@ -32,7 +32,7 @@ Install `requirements.txt` in a development environment. PHP CLI enables the PHP
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/unraid \
   RP2040_TEST_WHEEL=/path/to/pyserial-3.5-py2.py3-none-any.whl \
   python3 -m unittest discover -s tests -v
-python3 tools/test_boot_candidate.py /tmp/rp2040-source-rc1
+python3 tools/test_boot_candidate.py /tmp/rp2040-source-rc2
 ```
 
 Tests use temporary filesystems and fake service/serial operations. They do not start hardware control. CI runs Python 3.11/3.12, PHP syntax and protocol checks, source/publication audits, lifecycle simulations, source/payload verification and deterministic rebuild comparison.

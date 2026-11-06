@@ -21,6 +21,7 @@ $allowedModes = ['AUTO', 'SILENT', 'TURBO'];
 $error = null;
 $notice = null;
 $submittedRequestId = '';
+$modeReturnUrl = null;
 
 function rp2040_h($value): string {
     return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -131,10 +132,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     else throw new RuntimeException('No se pudo publicar la solicitud IPC.');
                 } else @unlink($tmp);
                 if ($error === null) {
-                    $pagePath = parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
-                    if (!is_string($pagePath) || $pagePath === '' || str_contains($pagePath, "\r") || str_contains($pagePath, "\n")) $pagePath = '/Main';
-                    header('Location: ' . $pagePath . '?request_id=' . rawurlencode($requestId), true, 303);
-                    exit;
+                    $submittedRequestId = $requestId;
+                    $pagePath = parse_url((string)($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH);
+                    if (!is_string($pagePath) || !preg_match('~^/(?:Settings|Utilities)/RP2040FanControl$~D', $pagePath)) {
+                        $pagePath = '/Settings/RP2040FanControl';
+                    }
+                    $modeReturnUrl = $pagePath . '?request_id=' . rawurlencode($requestId);
+                    if (!headers_sent()) {
+                        header('Location: ' . $modeReturnUrl, true, 303);
+                        exit;
+                    }
+                    // Unraid may already have emitted its page shell. Continue rendering
+                    // and navigate to GET from the rendered page instead of exiting blank.
+                    $notice = 'Solicitud enviada. Esperando confirmación del daemon.';
                 }
             } catch (Throwable $e) { $error = 'No se pudo enviar la solicitud al daemon.'; error_log('RP2040 Fan Control IPC: ' . $e->getMessage()); }
         }
@@ -143,7 +153,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
 $status = rp2040_read_json($statusFile);
 $result = rp2040_read_json($resultFile);
-$requestIdFromQuery = (string)($_GET['request_id'] ?? '');
+$requestIdFromQuery = $submittedRequestId !== '' ? $submittedRequestId : (string)($_GET['request_id'] ?? '');
+if (!preg_match('/^[a-f0-9]{32}$/D', $requestIdFromQuery)) $requestIdFromQuery = '';
 if ($requestIdFromQuery !== '' && preg_match('/^[a-f0-9]{32}$/', $requestIdFromQuery)) {
     if (is_array($result) && ($result['request_id'] ?? '') === $requestIdFromQuery) {
         $notice = (bool)($result['ok'] ?? false)
@@ -166,6 +177,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && ($_GET['rp2040_live'] ?? 
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, max-age=0');
     echo json_encode([
+        'command_result' => $requestIdFromQuery !== '' && is_array($result) && ($result['request_id'] ?? '') === $requestIdFromQuery ? $result : null,
         'status' => $status,
         'age' => $statusAge,
         'fresh' => $statusFresh,
@@ -223,7 +235,7 @@ foreach (['fan1', 'fan2'] as $fanKey) {
   <p>Estado y modos del controlador. El daemon Python conserva el control térmico y la comunicación con el RP2040.</p>
 
   <?php if ($error !== null): ?><div class="alert alert-danger"><?= rp2040_h($error) ?></div><?php endif; ?>
-  <?php if ($notice !== null): ?><div class="alert alert-info"><?= rp2040_h($notice) ?></div><?php endif; ?>
+  <?php if ($notice !== null): ?><div class="alert alert-info" data-live="command-result" role="status"><?= rp2040_h($notice) ?></div><?php endif; ?>
   <div class="rp2040-layout">
   <div class="panel panel-default rp2040-card">
     <div class="panel-heading">Servicio del daemon</div>
@@ -372,16 +384,27 @@ foreach (['fan1', 'fan2'] as $fanKey) {
     </div>
   </div>
 </div>
+<?php if ($modeReturnUrl !== null): ?>
+<script>
+window.location.replace(<?= json_encode($modeReturnUrl, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR) ?>);
+</script>
+<?php endif; ?>
 <script>
 (function(){
   const root=document.querySelector('.rp2040-fan-control'); if(!root)return;
-  const endpoint='/plugins/rp2040-fan-control/pages/index.php?rp2040_live=1';
+  const trackedRequestId=<?= json_encode($requestIdFromQuery, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR) ?>;
+  const endpoint='/plugins/rp2040-fan-control/pages/index.php?rp2040_live=1'+(trackedRequestId?'&request_id='+encodeURIComponent(trackedRequestId):'');
   const put=(key,value)=>{const el=root.querySelector('[data-live="'+key+'"]');if(el)el.textContent=value==null||value===''?'—':String(value)};
   const fmtTemp=v=>typeof v==='number'?v.toLocaleString('es-ES',{minimumFractionDigits:1,maximumFractionDigits:1})+' °C':'—';
   const fmtVal=(v,s='')=>v==null?'—':String(v)+s;
   async function update(){try{
     const response=await fetch(endpoint,{cache:'no-store',credentials:'same-origin'});if(!response.ok)return;
     const data=await response.json(),s=data.status||{},serial=s.serial||{},fans=s.fans||{},daemon=s.daemon||{};
+    const result=data.command_result;
+    if(trackedRequestId&&result&&result.request_id===trackedRequestId){
+      const notice=root.querySelector('[data-live="command-result"]');
+      if(notice){notice.textContent=String(result.message||'Solicitud procesada.')+(result.ok&&result.applied_mode?' Modo: '+result.applied_mode:'');notice.classList.toggle('alert-info',result.ok===true);notice.classList.toggle('alert-danger',result.ok!==true)}
+    }
     put('service',data.service);put('daemon',daemon.state);put('version',daemon.version);put('mode',s.mode);
     put('connected',serial.connected===true?'Sí':serial.connected===false?'No':'—');put('failsafe',serial.fail_safe===true?'ACTIVO':serial.fail_safe===false?'No':'—');
     put('lasttx',fmtVal(serial.last_tx_age_seconds==null?null:Number(serial.last_tx_age_seconds).toFixed(1),' s'));put('reconnects',serial.reconnect_count);put('cpu',fmtTemp(s.cpu_temperature_c));

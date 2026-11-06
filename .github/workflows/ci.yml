@@ -57,7 +57,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: matrix.python-version == '3.11'
         with:
-          name: rp2040-fan-control-source-rc1
+          name: rp2040-fan-control-source-review
           path: |
             dist/ci-a/*.plg
             dist/ci-a/*.sha256

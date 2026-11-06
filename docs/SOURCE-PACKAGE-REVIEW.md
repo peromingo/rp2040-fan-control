@@ -36,3 +36,7 @@ The main runtime sources now include the integration configuration, helper, WebU
 `tools/build_integration_plg.py` builds from these sources and reviewed transaction templates. The official pyserial wheel is pinned by SHA-256. Verification compares all payload files/modes and both installer blocks against the sources and wheel, rejects unexpected files, and checks the deterministic archive. The app contains a source/hash manifest. This resolves source correspondence for this new candidate; historical auditfix artifacts are unchanged.
 
 The source-built candidate remains subject to CI and target validation before release. Its retained legacy package basename supports upgrading the existing integration-plugin registration. Stable update-channel metadata is still pending.
+
+## Source RC2 WebUI completion fix
+
+Mode POST handling now preserves the rendered page if the enclosing Unraid shell has already sent headers. It uses a guarded HTTP redirect where possible and a rendered local GET navigation otherwise. The live JSON endpoint returns only the result matching the tracked request ID, allowing the confirmation message to update. Direct POST rejection remains in force. Regression tests emulate a previously emitted shell, pending-command conflicts, local return-route restrictions and result-ID isolation.

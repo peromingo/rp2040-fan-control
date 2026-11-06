@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from tools.build_integration_plg import build, collect_files, payload_bytes, render_plg, verify, digest, APP, ROOT, PLG_NAME
+from tools.build_integration_plg import build, collect_files, payload_bytes, render_plg, verify, digest, APP, ROOT, PLG_NAME, source_version
 
 WHEEL = os.environ.get('RP2040_TEST_WHEEL')
 
@@ -16,7 +16,7 @@ class SourcePackageTests(unittest.TestCase):
             self.assertGreater(verify(first, WHEEL), 0)
 
     def test_committed_review_package_and_checksum_match_sources(self):
-        path = ROOT / 'plugin/candidates/source-rc1' / PLG_NAME
+        path = ROOT / 'plugin/candidates' / source_version().split('-', 1)[1] / PLG_NAME
         self.assertGreater(verify(path, WHEEL), 0)
         expected = Path(str(path) + '.sha256').read_text().split()[0]
         self.assertEqual(digest(path.read_bytes()), expected)
