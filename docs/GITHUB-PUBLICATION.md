@@ -13,6 +13,8 @@ The source tree has been uploaded to GitHub. The CI workflow and `.gitignore` ar
 
 The auditfix22 candidate in `plugin/candidates/auditfix22/` contains the auditfix21 integration plus a verified fix for the uninstaller's baseline-page/icon check. It is a test candidate, not a stable release. The auditfix21 package is retained as the exact earlier installation artifact. The main source tree is a newer development architecture; neither candidate is a reproducible build of that source tree.
 
+The preferred build now uses `tools/build_integration_plg.py` to generate the source-built review candidate 0.8.0-source-rc1. See `README.md` and `SOURCE-PACKAGE-REVIEW.md` for the current source/payload verification workflow. Historical artifact notes below do not establish target validation of this new runtime.
+
 This document tracks publication readiness. A successful CI run validates the checks implemented in the workflow, but does not establish that the software is production-ready or that it works correctly on every Unraid installation.
 
 Do not merge the working branch into `main` or publish a stable release until the applicable reviews and release blockers below have been addressed.
@@ -63,20 +65,19 @@ php -l plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php
 sh -n plugin/scripts/rp2040-fan-control plugin/scripts/install-from-payload.sh tools/build_unraid_payload.sh
 ```
 
-To build and verify a review payload:
+To build and verify the current source-built PLG (see README for offline-wheel options):
 
 ```sh
-./tools/build_unraid_payload.sh 0.6.0-dev
+python3 tools/build_integration_plg.py /tmp/rp2040-source-rc1
 (
-  cd dist
-  sha256sum -c rp2040-fan-control-0.6.0-dev-payload.tar.gz.sha256
+  cd /tmp/rp2040-source-rc1
+  sha256sum -c rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256
 )
-python tools/audit_publication.py --payload dist/rp2040-fan-control-0.6.0-dev-payload.tar.gz
+python3 tools/audit_publication.py --payload /tmp/rp2040-source-rc1/payload.tar.gz
+python3 tools/test_boot_candidate.py /tmp/rp2040-source-rc1
 ```
 
-Use a version identifier appropriate to the current development stage. Confirm the exact generated filenames before running checksum verification.
-
-The payload is a review artifact, not a production installer.
+The internal version comes from `src/unraid/fan_control/version.py`. The builder checks the pinned dependency wheel and verifies source/payload correspondence. Keep generated output outside the source tree when running its publication audit. This is a review installer; stable-release approval remains pending.
 
 ## 4. Unraid integration and operational safety
 

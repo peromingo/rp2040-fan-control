@@ -388,21 +388,9 @@ def update_v28_temperature_stats(group, temperature, fan_value):
 
 
 def disk_text(identity):
-
-    model, serial = identity
-
-    names = {
-        "ST500LT012-1DG142": "ST500",
-        "HGST HTS541010A9E680": "HGST",
-        "TOSHIBA MQ01ABF050": "TOSHIBA",
-        "ST1000NX0423         00YK025D7A01874LEN": "ST1000",
-        "ST1000NX0423": "ST1000",
-    }
-
-    return names.get(
-        model,
-        model[:8]
-    )
+    """Use the runtime model for a short label, without per-installation aliases."""
+    model, _ = identity
+    return model[:8]
 
 
 def format_disk_status_summary():

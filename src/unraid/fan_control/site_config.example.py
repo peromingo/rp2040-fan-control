@@ -16,6 +16,10 @@ FAN2_DISKS = {
     ("REPLACE_WITH_MODEL_FOR_FAN2_DISK_2", "REPLACE_WITH_SERIAL_FOR_FAN2_DISK_2"),
 }
 
+# Optional CPU temperature source per fan. The WebUI will manage these flags.
+FAN1_USE_CPU = False
+FAN2_USE_CPU = False
+
 def validate_disk_config():
     all_disks = FAN1_DISKS | FAN2_DISKS
     if not all_disks or any("REPLACE_WITH_" in value for item in all_disks for value in item):

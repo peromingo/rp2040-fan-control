@@ -5,6 +5,7 @@ Title="RP2040 Fan Control"
 Tag="fan"
 Markdown="false"
 Eval="true"
+
 ---
 <?php
 include '/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php';

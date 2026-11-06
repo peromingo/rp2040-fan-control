@@ -1,0 +1,177 @@
+
+set -eu
+ROOT_PREFIX="${RP2040_PLG_TEST_ROOT:-}"
+P="$ROOT_PREFIX/boot/config/plugins/rp2040-fan-control"
+BASE="$P/backup/webui-integration-source-@@VERSION@@"
+WRAPPER="$ROOT_PREFIX/usr/local/sbin/rp2040-fan-control"
+HELPER="$ROOT_PREFIX/usr/local/sbin/rp2040-fan-control-webui"
+PAGE="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php"
+PAGE_ENTRY="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page"
+PAGE_ICON="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png"
+STARTUP_EVENT="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart"
+SUDOERS="$ROOT_PREFIX/etc/sudoers.d/rp2040-fan-control-webui"
+JOURNAL="$BASE/recovery-pending"
+RESUME_UNINSTALL=0
+
+# Reject symlinked components on security-sensitive paths before reading or writing them.
+assert_no_symlink_path() {
+  local path="$1" current="" part
+  local -a components
+  case "$path" in /*) ;; *) echo "ERROR: ruta no absoluta: $path" >&2; return 1 ;; esac
+  IFS='/' read -r -a components <<< "${path#/}"
+  for part in "${components[@]}"; do
+    [ -n "$part" ] || continue
+    current="$current/$part"
+    [ ! -L "$current" ] || { echo "ERROR: se rechaza componente simbólico: $current" >&2; return 1; }
+  done
+}
+validate_recovery_journal() {
+  local file="$1"
+  [ ! -L "$file" ] || { echo "ERROR: el diario de recuperación es un enlace simbólico; no se modifica nada: $file" >&2; return 1; }
+  [ -e "$file" ] || return 0
+  [ -f "$file" ] || { echo "ERROR: el diario de recuperación no es un archivo regular: $file" >&2; return 1; }
+  awk '
+    NR==1 { if ($0!="recovery-v1") exit 1; next }
+    /^started=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ { if (started++) exit 1; next }
+    /^source=(installer|uninstaller)$/ { if (source++) exit 1; next }
+    /^local-config-created=1$/ { if (localcfg++) exit 1; next }
+    { exit 1 }
+    END { if (NR<2 || !started) exit 1 }
+  ' "$file" || { echo "ERROR: diario de recuperación mal formado; no se modifica nada: $file" >&2; return 1; }
+}
+validate_checksum_manifest() {
+  local file="$1"
+  awk '
+    NF != 2 { exit 1 }
+    length($1) != 64 || $1 ~ /[^0-9a-fA-F]/ { exit 1 }
+    $2 !~ /^(manifest|files\/[A-Za-z0-9_.+\/-]+)$/ { exit 1 }
+    $2 ~ /(^|\/)\.\.(\/|$)/ || $2 ~ /\/\/|\\\\/ { exit 1 }
+    seen[$2]++ { exit 1 }
+    END { if (NR == 0) exit 1 }
+  ' "$file" || { echo "ERROR: SHA256SUMS contiene rutas inválidas o duplicadas; no se modifica nada: $file" >&2; return 1; }
+  local digest rel
+  while read -r digest rel; do
+    assert_no_symlink_path "$BASE/$rel" || return 1
+    [ -f "$BASE/$rel" ] && [ ! -L "$BASE/$rel" ] || { echo "ERROR: SHA256SUMS apunta a un archivo no regular o inexistente: $BASE/$rel" >&2; return 1; }
+  done < "$file"
+}
+# Refuse symlinked path components before reading journal or modifying destinations.
+for guarded_path in "$P" "$P/backup" "$BASE" "$JOURNAL" "$WRAPPER" "$HELPER" "$PAGE" "$PAGE_ENTRY" "$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS" "$P/ENABLE"; do
+  assert_no_symlink_path "$guarded_path"
+done
+validate_recovery_journal "$JOURNAL"
+# An interrupted install journal may include local-config-created=1. Do not let the
+# uninstaller clear that journal without applying the install-recovery semantics.
+# The installer is the only entry point that knows how to remove that candidate-created
+# example config safely; it restores the baseline, verifies it, and exits without reinstalling.
+if [ -e "$JOURNAL" ] || [ -L "$JOURNAL" ]; then
+  if grep -qx 'source=installer' "$JOURNAL"; then
+    echo "ERROR: hay una recuperación de instalación pendiente. Ejecuta el instalador una vez para recuperar y vuelve a ejecutar la desinstalación después; no se ha modificado nada." >&2
+    exit 1
+  fi
+  if ! grep -qx 'source=uninstaller' "$JOURNAL"; then
+    echo "ERROR: diario de recuperación desconocido o mal formado; no se modifica nada: $JOURNAL" >&2
+    exit 1
+  fi
+  # The initial uninstall stops the service before creating this journal. On retry,
+  # the wrapper may already be restored to an older implementation or removed.
+  RESUME_UNINSTALL=1
+fi
+# Validate the full baseline before stopping the service or deleting/changing anything.
+assert_no_symlink_path "$BASE/manifest"
+assert_no_symlink_path "$BASE/baseline-created"
+assert_no_symlink_path "$BASE/SHA256SUMS"
+assert_no_symlink_path "$BASE/files"
+assert_no_symlink_path "$BASE/files/app"
+[ -f "$BASE/manifest" ] && [ ! -L "$BASE/manifest" ] || { echo "ERROR: no hay manifiesto regular de copia base; no se modifica nada." >&2; exit 1; }
+[ -f "$BASE/baseline-created" ] && [ ! -L "$BASE/baseline-created" ] || { echo "ERROR: copia base incompleta; no se modifica nada." >&2; exit 1; }
+[ -f "$BASE/SHA256SUMS" ] && [ ! -L "$BASE/SHA256SUMS" ] || { echo "ERROR: falta SHA256SUMS; no se modifica nada." >&2; exit 1; }
+validate_checksum_manifest "$BASE/SHA256SUMS"
+while IFS="$(printf '\t')" read -r KIND REL || [ -n "${KIND:-}${REL:-}" ]; do
+  [ -n "${KIND:-}" ] && [ -n "${REL:-}" ] || { echo "ERROR: línea inválida en manifiesto; no se modifica nada." >&2; exit 1; }
+  case "$KIND:$REL" in
+    EXISTING:usr/local/sbin/rp2040-fan-control|EXISTING:usr/local/sbin/rp2040-fan-control-webui|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart|EXISTING:etc/sudoers.d/rp2040-fan-control-webui) assert_no_symlink_path "$BASE/files/$REL"; [ -f "$BASE/files/$REL" ] && [ ! -L "$BASE/files/$REL" ] || { echo "ERROR: falta copia $BASE/files/$REL; no se modifica nada." >&2; exit 1; } ;;
+    NEW:usr/local/sbin/rp2040-fan-control|NEW:usr/local/sbin/rp2040-fan-control-webui|NEW:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php|NEW:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page|NEW:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png|NEW:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart|NEW:etc/sudoers.d/rp2040-fan-control-webui) ;;
+    EXISTING_APP:*) case "$REL" in /*|*..*|*\\*) echo "ERROR: ruta no válida: $REL" >&2; exit 1 ;; esac; assert_no_symlink_path "$BASE/files/app/$REL"; assert_no_symlink_path "$P/app/$REL"; [ -f "$BASE/files/app/$REL" ] && [ ! -L "$BASE/files/app/$REL" ] || { echo "ERROR: falta copia regular $BASE/files/app/$REL; no se modifica nada." >&2; exit 1; } ;;
+    NEW_APP:*) case "$REL" in /*|*..*|*\\*) echo "ERROR: ruta no válida: $REL" >&2; exit 1 ;; esac; assert_no_symlink_path "$P/app/$REL" ;;
+    *) echo "ERROR: entrada desconocida en manifiesto: $KIND $REL" >&2; exit 1 ;;
+  esac
+done < "$BASE/manifest"
+( cd "$BASE" && sha256sum -c SHA256SUMS >/dev/null ) || { echo "ERROR: la copia base no supera SHA-256; no se modifica nada." >&2; exit 1; }
+if [ "$RESUME_UNINSTALL" != 1 ] && [ -x "$WRAPPER" ]; then
+  "$WRAPPER" stop || { echo "ERROR: no se pudo detener el daemon; se conservan los archivos" >&2; exit 1; }
+fi
+if [ ! -e "$JOURNAL" ]; then printf 'recovery-v1\nstarted=%s\nsource=uninstaller\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$JOURNAL" || { echo "ERROR: no se pudo crear diario de recuperación" >&2; exit 1; }; chmod 0600 "$JOURNAL"; sync; fi
+rm -f "$P/ENABLE" || { echo "ERROR: no se pudo retirar ENABLE" >&2; exit 1; }
+while IFS="$(printf '\t')" read -r KIND REL || [ -n "${KIND:-}${REL:-}" ]; do
+  case "$KIND" in
+    EXISTING)
+      case "$REL" in
+        usr/local/sbin/rp2040-fan-control) dest="$WRAPPER" ;;
+        usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER" ;;
+        usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT" ;;
+        etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS" ;;
+        *) continue ;;
+      esac
+      src="$BASE/files/$REL"
+      mkdir -p "$(dirname "$dest")" || { echo "ERROR: no se pudo preparar $dest" >&2; exit 1; }
+      cp -p "$src" "$dest" || { echo "ERROR: no se pudo restaurar $dest" >&2; exit 1; }
+      ;;
+    NEW)
+      case "$REL" in
+        usr/local/sbin/rp2040-fan-control) dest="$WRAPPER" ;;
+        usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER" ;;
+        usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT" ;;
+        etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS" ;;
+        *) echo "ERROR: ruta NEW no admitida: $REL" >&2; exit 1 ;;
+      esac
+      rm -f "$dest" || { echo "ERROR: no se pudo eliminar $dest" >&2; exit 1; }
+      ;;
+    EXISTING_APP)
+      rel="$REL"; src="$BASE/files/app/$rel"; dest="$P/app/$rel"
+      mkdir -p "$(dirname "$dest")" || { echo "ERROR: no se pudo preparar $dest" >&2; exit 1; }
+      cp -p "$src" "$dest" || { echo "ERROR: no se pudo restaurar $dest" >&2; exit 1; }
+      ;;
+    NEW_APP)
+      rel="$REL"; rm -f "$P/app/$rel" || { echo "ERROR: no se pudo eliminar $P/app/$rel" >&2; exit 1; }
+      ;;
+    *) echo "ERROR: entrada desconocida durante la reversión: $KIND $REL" >&2; exit 1 ;;
+  esac
+done < "$BASE/manifest"
+# Verify all restored destinations against the baseline before clearing the durable journal.
+while IFS="$(printf '\t')" read -r KIND REL || [ -n "${KIND:-}${REL:-}" ]; do
+  case "$KIND:$REL" in
+    EXISTING:usr/local/sbin/rp2040-fan-control) dest="$WRAPPER"; src="$BASE/files/$REL" ;;
+    EXISTING:usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER"; src="$BASE/files/$REL" ;;
+    EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE"; src="$BASE/files/$REL" ;;
+    EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY"; src="$BASE/files/$REL" ;;
+    EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON"; src="$BASE/files/$REL" ;;
+    EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT"; src="$BASE/files/$REL" ;;
+    EXISTING:etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS"; src="$BASE/files/$REL" ;;
+    NEW:usr/local/sbin/rp2040-fan-control) dest="$WRAPPER"; src="" ;;
+    NEW:usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER"; src="" ;;
+    NEW:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT"; src="" ;;
+    NEW:etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS"; src="" ;;
+    EXISTING_APP:*) dest="$P/app/$REL"; src="$BASE/files/app/$REL" ;;
+    NEW_APP:*) dest="$P/app/$REL"; src="" ;;
+    *) echo "ERROR: entrada desconocida verificando restauración: $KIND $REL; diario conservado" >&2; exit 1 ;;
+  esac
+  if [ -n "$src" ]; then [ -f "$dest" ] && cmp -s "$src" "$dest" || { echo "ERROR: hash/contenido no coincide en $dest; diario conservado" >&2; exit 1; }
+  else [ ! -e "$dest" ] && [ ! -L "$dest" ] || { echo "ERROR: $dest debería estar ausente; diario conservado" >&2; exit 1; }; fi
+done < "$BASE/manifest"
+if command -v visudo >/dev/null 2>&1; then visudo -c >/dev/null 2>&1 || { echo "ERROR: la reversión terminó, pero la validación de sudoers falló; diario conservado." >&2; exit 1; }; fi
+rm -f "$JOURNAL" || { echo "ERROR: no se pudo retirar el diario; recuperación pendiente" >&2; exit 1; }
+sync
+echo "Reversión de integración aplicada y verificada. Configuración JSON/local, logs y copias de seguridad conservados."
+echo "El firmware RP2040 no se ha modificado."
+
+  

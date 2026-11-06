@@ -135,6 +135,26 @@ def group_temperature(group, temperatures):
     return max(values)
 
 
+def group_source_warnings(group, disk_paths, temperatures, use_cpu=False, cpu_temp=None):
+    """Return warnings for configured sources without valid readings.
+
+    Missing HDDs do not invalidate temperatures from remaining disks. A
+    configured CPU source without a reading is also reported, but valid HDD
+    readings remain usable. The caller decides how to display/log warnings.
+    """
+    warnings = []
+    for identity in sorted(group):
+        model, serial = identity
+        label = "%s (%s)" % (model, serial)
+        if identity not in disk_paths:
+            warnings.append("HDD configurado ausente: " + label)
+        elif identity not in temperatures:
+            warnings.append("HDD sin temperatura SMART válida: " + label)
+    if use_cpu and cpu_temp is None:
+        warnings.append("CPU configurada sin lectura térmica válida; se usan los HDD disponibles")
+    return warnings
+
+
 def normalize_model(model):
     """
     Normaliza espacios consecutivos del modelo para formar

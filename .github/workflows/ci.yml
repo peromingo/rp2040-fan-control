@@ -1,13 +1,10 @@
 name: CI
-
 on:
   push:
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,52 +13,54 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
           tools: none
+      - name: Prepare pinned build and test dependency
+        run: |
+          python -m pip download --no-deps --dest /tmp/rp2040-deps pyserial==3.5
+          echo "c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0  /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl" | sha256sum -c
+          python -m pip install --no-deps /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
       - name: Python syntax
         run: PYTHONPYCACHEPREFIX=/tmp/rp2040-pycache python -m compileall -q src tests tools
       - name: Unit and integration-contract tests
         env:
           PYTHONPATH: src/unraid
           PYTHONDONTWRITEBYTECODE: "1"
+          RP2040_TEST_WHEEL: /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
         run: python -m unittest discover -s tests -v
       - name: Publication source audit
         run: python tools/audit_publication.py .
-      - name: PHP syntax
-        run: php -l plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php
-      - name: Shell syntax
-        run: sh -n plugin/scripts/rp2040-fan-control plugin/scripts/install-from-payload.sh tools/build_unraid_payload.sh
-      - name: Build payload and verify checksum
+      - name: PHP and shell syntax
         run: |
-          ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-a
-          (cd dist/ci-a && sha256sum -c rp2040-fan-control-0.6.0-ci-payload.tar.gz.sha256)
-          python tools/audit_publication.py --payload dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz
-      - name: Verify bundled pyserial import from payload
+          php -l plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php
+          sh -n plugin/scripts/rp2040-fan-control
+          sh -n plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart
+          bash -n plugin/templates/integration-install.sh.in
+          bash -n plugin/templates/integration-remove.sh.in
+      - name: Build source PLG and verify payload
         run: |
-          mkdir -p /tmp/rp2040-payload-check
-          tar -xzf dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz -C /tmp/rp2040-payload-check
-          test -f /tmp/rp2040-payload-check/usr/local/share/rp2040-fan-control/app/vendor/serial/__init__.py
-          PYTHONPATH="/tmp/rp2040-payload-check/usr/local/share/rp2040-fan-control/app/vendor" python -c 'import serial; assert serial.__version__ == "3.5", serial.__version__; print("Bundled pyserial:", serial.__version__)'
-      - name: Verify deterministic payload
+          python tools/build_integration_plg.py dist/ci-a --wheel /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
+          (cd dist/ci-a && sha256sum -c rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256)
+          python tools/audit_publication.py --payload dist/ci-a/payload.tar.gz
+          python tools/test_boot_candidate.py dist/ci-a
+      - name: Verify deterministic source build
         run: |
-          ./tools/build_unraid_payload.sh 0.6.0-ci dist/ci-b
-          cmp dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz dist/ci-b/rp2040-fan-control-0.6.0-ci-payload.tar.gz
-      - name: Upload isolated-VM test payload
+          python tools/build_integration_plg.py dist/ci-b --wheel /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
+          cmp dist/ci-a/payload.tar.gz dist/ci-b/payload.tar.gz
+          cmp dist/ci-a/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg dist/ci-b/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
+      - uses: actions/upload-artifact@v4
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v4
         with:
-          name: rp2040-fan-control-ci-payload
+          name: rp2040-fan-control-source-rc1
           path: |
-            dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz
-            dist/ci-a/rp2040-fan-control-0.6.0-ci-payload.tar.gz.sha256
+            dist/ci-a/*.plg
+            dist/ci-a/*.sha256
+            dist/ci-a/payload.tar.gz
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14

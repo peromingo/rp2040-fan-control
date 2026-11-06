@@ -2,7 +2,7 @@
 
 Scope: development source tree on `source-tree-review` and the retained auditfix24 integration payload. This report concerns repository code, not operational telemetry.
 
-## Finding
+## Historical auditfix24 finding
 
 The integration package is not currently a build of the main source tree. Of the 22 non-vendor payload files mapped to source locations, six match, ten differ and six have no corresponding main-tree file. The main tree also contains the safe `instance_lock.py` implementation, which is absent from the integration payload. The separate legacy daemon entry point is intentionally not included in the integration payload.
 
@@ -28,3 +28,11 @@ The six candidate-only source files are the sudoers policy, startup hook, image 
 5. Configure a stable update manifest URL (`pluginURL`) and verify the update-check/update lifecycle before publishing a stable channel.
 
 Auditfix24 remains an integration candidate. Retaining its artifact and checksum supports inspection and reproduction of that artifact; it does not establish correspondence with the main source tree.
+
+## Source-built candidate 0.8.0-source-rc1
+
+The main runtime sources now include the integration configuration, helper, WebUI and thermal/serial safeguards. Safe instance locking on the stable runtime path and persistent interpreter selection/dependency diagnostics are retained. Direct POST to the standalone PHP live endpoint is rejected; mutations use the Unraid route.
+
+`tools/build_integration_plg.py` builds from these sources and reviewed transaction templates. The official pyserial wheel is pinned by SHA-256. Verification compares all payload files/modes and both installer blocks against the sources and wheel, rejects unexpected files, and checks the deterministic archive. The app contains a source/hash manifest. This resolves source correspondence for this new candidate; historical auditfix artifacts are unchanged.
+
+The source-built candidate remains subject to CI and target validation before release. Its retained legacy package basename supports upgrading the existing integration-plugin registration. Stable update-channel metadata is still pending.

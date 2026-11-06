@@ -91,6 +91,18 @@ class FanController:
 
         return current
 
+    def smooth_control_output(self, current, target, temperature):
+        """Apply ramping only during normal operation.
+
+        Missing all usable thermal sources or reaching the configured alert
+        threshold bypasses ramping: the commanded target must become 100% in
+        this control cycle. Partial source loss is handled separately as a
+        warning; valid remaining HDD/CPU readings continue to drive the curve.
+        """
+        if temperature is None or temperature >= self.temp_alert:
+            return 100
+        return self.smooth(current, target)
+
     def control_reason(
         self,
         temperature,

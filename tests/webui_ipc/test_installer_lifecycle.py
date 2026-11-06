@@ -1,5 +1,6 @@
 """Static and isolated filesystem integration tests for installer lifecycle."""
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -81,6 +82,10 @@ class InstallerLifecycleTests(unittest.TestCase):
         script = INSTALLER_TEXT
         for old, new in replacements:
             script = script.replace(old, new)
+        if sys.platform == "darwin":
+            # Preserve the real permission checks using BSD stat in this copied fixture.
+            script = script.replace("stat -c '%u'", "stat -f '%u'")
+            script = script.replace("stat -c '%a'", "stat -f '%Lp'")
         installer = root / "install-from-payload.sh"
         installer.write_text(script, encoding="utf-8")
         installer.chmod(0o755)

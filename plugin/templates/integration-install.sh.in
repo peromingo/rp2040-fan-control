@@ -1,0 +1,372 @@
+
+set -eu
+ROOT_PREFIX="${RP2040_PLG_TEST_ROOT:-}"
+P="$ROOT_PREFIX/boot/config/plugins/rp2040-fan-control"
+APP="$P/app"
+WRAPPER="$ROOT_PREFIX/usr/local/sbin/rp2040-fan-control"
+HELPER="$ROOT_PREFIX/usr/local/sbin/rp2040-fan-control-webui"
+PAGE="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php"
+PAGE_ENTRY="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page"
+PAGE_ICON="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png"
+STARTUP_EVENT="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart"
+SUDOERS="$ROOT_PREFIX/etc/sudoers.d/rp2040-fan-control-webui"
+BASE="$P/backup/webui-integration-source-@@VERSION@@"
+TMP="$(mktemp -d)"
+COMMIT=0
+BASELINE_TOUCHED=0
+LOCAL_CONFIG_CREATED=0
+
+# Reject symlinked components on security-sensitive paths before reading or writing them.
+assert_no_symlink_path() {
+  local path="$1" current="" part
+  local -a components
+  case "$path" in /*) ;; *) echo "ERROR: ruta no absoluta: $path" >&2; return 1 ;; esac
+  IFS='/' read -r -a components <<< "${path#/}"
+  for part in "${components[@]}"; do
+    [ -n "$part" ] || continue
+    current="$current/$part"
+    [ ! -L "$current" ] || { echo "ERROR: se rechaza componente simbólico: $current" >&2; return 1; }
+  done
+}
+validate_recovery_journal() {
+  local file="$1"
+  [ ! -L "$file" ] || { echo "ERROR: el diario de recuperación es un enlace simbólico; no se modifica nada: $file" >&2; return 1; }
+  [ -e "$file" ] || return 0
+  [ -f "$file" ] || { echo "ERROR: el diario de recuperación no es un archivo regular: $file" >&2; return 1; }
+  awk '
+    NR==1 { if ($0!="recovery-v1") exit 1; next }
+    /^started=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ { if (started++) exit 1; next }
+    /^source=(installer|uninstaller)$/ { if (source++) exit 1; next }
+    /^local-config-created=1$/ { if (localcfg++) exit 1; next }
+    { exit 1 }
+    END { if (NR<2 || !started) exit 1 }
+  ' "$file" || { echo "ERROR: diario de recuperación mal formado; no se modifica nada: $file" >&2; return 1; }
+}
+validate_checksum_manifest() {
+  local file="$1"
+  awk '
+    NF != 2 { exit 1 }
+    length($1) != 64 || $1 ~ /[^0-9a-fA-F]/ { exit 1 }
+    $2 !~ /^(manifest|files\/[A-Za-z0-9_.+\/-]+)$/ { exit 1 }
+    $2 ~ /(^|\/)\.\.(\/|$)/ || $2 ~ /\/\/|\\\\/ { exit 1 }
+    seen[$2]++ { exit 1 }
+    END { if (NR == 0) exit 1 }
+  ' "$file" || { echo "ERROR: SHA256SUMS contiene rutas inválidas o duplicadas; no se modifica nada: $file" >&2; return 1; }
+  local digest rel
+  while read -r digest rel; do
+    assert_no_symlink_path "$BASE/$rel" || return 1
+    [ -f "$BASE/$rel" ] && [ ! -L "$BASE/$rel" ] || { echo "ERROR: SHA256SUMS apunta a un archivo no regular o inexistente: $BASE/$rel" >&2; return 1; }
+  done < "$file"
+}
+# Validate the complete manifest and every required backup before changing any destination.
+validate_baseline() {
+  assert_no_symlink_path "$BASE" || return 1
+  assert_no_symlink_path "$BASE/manifest" || return 1
+  assert_no_symlink_path "$BASE/baseline-created" || return 1
+  assert_no_symlink_path "$BASE/SHA256SUMS" || return 1
+  assert_no_symlink_path "$BASE/files" || return 1
+  [ -f "$BASE/manifest" ] || { echo "ERROR: falta el manifiesto de copia base: $BASE" >&2; return 1; }
+  [ -f "$BASE/baseline-created" ] || { echo "ERROR: copia base incompleta (falta baseline-created): $BASE" >&2; return 1; }
+  [ -f "$BASE/SHA256SUMS" ] || { echo "ERROR: falta SHA256SUMS en la copia base: $BASE" >&2; return 1; }
+  validate_checksum_manifest "$BASE/SHA256SUMS" || return 1
+  local kind rel src
+  while IFS="$(printf '\t')" read -r kind rel || [ -n "${kind:-}${rel:-}" ]; do
+    [ -n "${kind:-}" ] && [ -n "${rel:-}" ] || { echo "ERROR: línea vacía o inválida en el manifiesto" >&2; return 1; }
+    case "$kind:$rel" in
+      EXISTING:usr/local/sbin/rp2040-fan-control|EXISTING:usr/local/sbin/rp2040-fan-control-webui|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png|EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart|EXISTING:etc/sudoers.d/rp2040-fan-control-webui) src="$BASE/files/$rel" ;;
+      NEW:usr/local/sbin/rp2040-fan-control|NEW:usr/local/sbin/rp2040-fan-control-webui|NEW:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php|NEW:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page|NEW:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png|NEW:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart|NEW:etc/sudoers.d/rp2040-fan-control-webui) continue ;;
+      EXISTING_APP:*) case "$rel" in /*|*..*|*\\*) echo "ERROR: ruta no válida en manifiesto: $rel" >&2; return 1 ;; esac; src="$BASE/files/app/$rel"; dest="$APP/$rel"; assert_no_symlink_path "$dest" || return 1 ;;
+      NEW_APP:*) case "$rel" in /*|*..*|*\\*) echo "ERROR: ruta no válida en manifiesto: $rel" >&2; return 1 ;; esac; dest="$APP/$rel"; assert_no_symlink_path "$dest" || return 1; continue ;;
+      *) echo "ERROR: entrada desconocida en manifiesto: $kind $rel" >&2; return 1 ;;
+    esac
+    assert_no_symlink_path "$src" || return 1
+    [ -f "$src" ] && [ ! -L "$src" ] || { echo "ERROR: falta copia de seguridad regular requerida: $src" >&2; return 1; }
+  done < "$BASE/manifest"
+  ( cd "$BASE" && sha256sum -c SHA256SUMS >/dev/null ) || { echo "ERROR: la copia base no supera la verificación SHA-256; no se restaura nada" >&2; return 1; }
+}
+recovery_journal="$BASE/recovery-pending"
+verify_restored_baseline() {
+  local kind rel dest src
+  while IFS="$(printf '\t')" read -r kind rel || [ -n "${kind:-}${rel:-}" ]; do
+    case "$kind:$rel" in
+      EXISTING:usr/local/sbin/rp2040-fan-control) dest="$WRAPPER"; src="$BASE/files/$rel" ;;
+      EXISTING:usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER"; src="$BASE/files/$rel" ;;
+      EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE"; src="$BASE/files/$rel" ;;
+      EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY"; src="$BASE/files/$rel" ;;
+      EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON"; src="$BASE/files/$rel" ;;
+      EXISTING:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT"; src="$BASE/files/$rel" ;;
+      EXISTING:etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS"; src="$BASE/files/$rel" ;;
+      NEW:usr/local/sbin/rp2040-fan-control) dest="$WRAPPER"; src="" ;;
+      NEW:usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON"; src="" ;;
+      NEW:usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT"; src="" ;;
+      NEW:etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS"; src="" ;;
+      EXISTING_APP:*) dest="$APP/$rel"; src="$BASE/files/app/$rel" ;;
+      NEW_APP:*) dest="$APP/$rel"; src="" ;;
+      *) echo "ERROR: entrada desconocida verificando restauración: $kind $rel" >&2; return 1 ;;
+    esac
+    if [ -n "$src" ]; then
+      [ -f "$dest" ] && cmp -s "$src" "$dest" || { echo "ERROR: verificación posterior fallida: $dest" >&2; return 1; }
+    else
+      [ ! -e "$dest" ] && [ ! -L "$dest" ] || { echo "ERROR: debía quedar ausente tras restaurar: $dest" >&2; return 1; }
+    fi
+  done < "$BASE/manifest"
+}
+restore_baseline() {
+  validate_baseline || return 1
+  # Durable marker: leave it in place on any error so the next run can retry recovery.
+  validate_recovery_journal "$recovery_journal" || return 1
+  if [ ! -e "$recovery_journal" ] && [ ! -L "$recovery_journal" ]; then
+    printf 'recovery-v1\nstarted=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$recovery_journal" || return 1
+    chmod 0600 "$recovery_journal" || return 1
+    sync
+  fi
+  local kind rel dest src
+  while IFS="$(printf '\t')" read -r kind rel || [ -n "${kind:-}${rel:-}" ]; do
+    case "$kind" in
+      EXISTING)
+        case "$rel" in
+          usr/local/sbin/rp2040-fan-control) dest="$WRAPPER" ;;
+          usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT" ;;
+          etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS" ;;
+          *) echo "ERROR: ruta EXISTING no admitida: $rel" >&2; return 1 ;;
+        esac
+        src="$BASE/files/$rel"; mkdir -p "$(dirname "$dest")" || return 1
+        cp -p "$src" "$dest" || { echo "ERROR: no se pudo restaurar $dest; diario conservado" >&2; return 1; } ;;
+      NEW)
+        case "$rel" in
+          usr/local/sbin/rp2040-fan-control) dest="$WRAPPER" ;;
+          usr/local/sbin/rp2040-fan-control-webui) dest="$HELPER" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php) dest="$PAGE" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page) dest="$PAGE_ENTRY" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png) dest="$PAGE_ICON" ;;
+          usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart) dest="$STARTUP_EVENT" ;;
+          etc/sudoers.d/rp2040-fan-control-webui) dest="$SUDOERS" ;;
+          *) echo "ERROR: ruta NEW no admitida: $rel" >&2; return 1 ;;
+        esac
+        rm -f "$dest" || { echo "ERROR: no se pudo eliminar $dest; diario conservado" >&2; return 1; } ;;
+      EXISTING_APP)
+        src="$BASE/files/app/$rel"; dest="$APP/$rel"; mkdir -p "$(dirname "$dest")" || return 1
+        cp -p "$src" "$dest" || { echo "ERROR: no se pudo restaurar $dest; diario conservado" >&2; return 1; } ;;
+      NEW_APP)
+        rm -f "$APP/$rel" || { echo "ERROR: no se pudo eliminar $APP/$rel; diario conservado" >&2; return 1; } ;;
+    esac
+  done < "$BASE/manifest"
+  # If this transaction created the example local config, recovery must remove it too.
+  # The flag is durably appended before that file is created; uninstaller journals omit it.
+  if grep -qx 'local-config-created=1' "$recovery_journal"; then
+    rm -f "$APP/fan_control/site_config_local.py" || { echo "ERROR: no se pudo retirar la configuración local creada por esta instalación; diario conservado" >&2; return 1; }
+  fi
+  verify_restored_baseline || { echo "ERROR: restauración no verificada; diario conservado en $recovery_journal" >&2; return 1; }
+  if command -v visudo >/dev/null 2>&1; then visudo -c >/dev/null 2>&1 || { echo "ERROR: visudo falla tras restaurar; diario conservado" >&2; return 1; }; fi
+  rm -f "$recovery_journal" || { echo "ERROR: no se pudo retirar el diario tras verificar; recuperación pendiente" >&2; return 1; }
+  sync
+}
+cleanup() {
+  rc=$?
+  if [ "$BASELINE_TOUCHED" = 1 ] && [ "$COMMIT" != 1 ]; then
+    echo "ERROR: instalación incompleta; revirtiendo los archivos de la integración" >&2
+    if ! restore_baseline; then
+      echo "ERROR CRÍTICO: reversión automática incompleta; no se ha ocultado el error. Revisión manual requerida: $BASE" >&2
+      rc=1
+    fi
+    if [ "$LOCAL_CONFIG_CREATED" = 1 ]; then
+      if ! rm -f "$APP/fan_control/site_config_local.py"; then
+        echo "ERROR CRÍTICO: no se pudo retirar la configuración local creada por esta instalación" >&2
+        rc=1
+      fi
+    fi
+  fi
+  rm -rf "$TMP" || { echo "ERROR: no se pudo limpiar el temporal $TMP" >&2; rc=1; }
+  return "$rc"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+for guarded_path in "$P" "$P/backup" "$BASE" "$BASE/recovery-pending" "$WRAPPER" "$HELPER" "$PAGE" "$PAGE_ENTRY" "$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS" "$APP/fan_control/site_config_local.py"; do
+  assert_no_symlink_path "$guarded_path"
+done
+validate_recovery_journal "$BASE/recovery-pending"
+mkdir -p "$P" "$P/logs" "$P/backup"
+if [ -e "$BASE/recovery-pending" ] || [ -L "$BASE/recovery-pending" ]; then
+  echo "AVISO: se detectó recuperación pendiente; se intentará restaurar antes de cualquier instalación nueva."
+  restore_baseline || { echo "ERROR CRÍTICO: recuperación pendiente no completada; diario conservado: $BASE/recovery-pending" >&2; exit 1; }
+  echo "Recuperación verificada. Vuelve a ejecutar el instalador por separado si aún deseas instalar el candidato."
+  exit 1
+fi
+cat > "$TMP/payload.b64" <<'__PAYLOAD_EOF__'
+@@PAYLOAD_BASE64@@
+__PAYLOAD_EOF__
+base64 -d "$TMP/payload.b64" > "$TMP/payload.tar.gz"
+ACTUAL_SHA="$(sha256sum "$TMP/payload.tar.gz" | awk '{print $1}')"
+[ "$ACTUAL_SHA" = "@@PAYLOAD_SHA256@@" ] || { echo "ERROR: SHA-256 del payload no coincide" >&2; exit 1; }
+tar -tzf "$TMP/payload.tar.gz" >/dev/null
+mkdir "$TMP/unpack"
+tar -xzf "$TMP/payload.tar.gz" -C "$TMP/unpack"
+SRC_APP="$TMP/unpack/usr/local/share/rp2040-fan-control/app"
+SRC_WRAPPER="$TMP/unpack/usr/local/sbin/rp2040-fan-control"
+SRC_HELPER="$TMP/unpack/usr/local/sbin/rp2040-fan-control-webui"
+SRC_PAGE="$TMP/unpack/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php"
+SRC_PAGE_ENTRY="$TMP/unpack/usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page"
+SRC_PAGE_ICON="$TMP/unpack/usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png"
+SRC_STARTUP_EVENT="$TMP/unpack/usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart"
+SRC_SUDOERS="$TMP/unpack/etc/sudoers.d/rp2040-fan-control-webui"
+[ -f "$SRC_APP/fan_control/configuration.py" ] && [ -x "$SRC_WRAPPER" ] && [ -x "$SRC_HELPER" ] && [ -f "$SRC_PAGE" ] && [ -f "$SRC_SUDOERS" ] && [ -f "$SRC_PAGE_ENTRY" ] && [ -f "$SRC_PAGE_ICON" ] && [ -f "$SRC_STARTUP_EVENT" ] || { echo "ERROR: payload incompleto" >&2; exit 1; }
+if command -v php >/dev/null 2>&1; then php -l "$SRC_PAGE" >/dev/null || { echo "ERROR: sintaxis PHP no válida; no se ha modificado nada" >&2; exit 1; }; else echo "AVISO: php CLI no disponible; sintaxis PHP no comprobada antes de instalar" >&2; fi
+# A missing RAM wrapper and IPC directory permit bootstrap after reboot.
+# Enabled manual upgrades on an already installed runtime remain prohibited.
+assert_no_symlink_path "$P/ENABLE"
+# Accept only the standard /var/run -> /run alias; validate its real destination.
+assert_no_symlink_path "$ROOT_PREFIX/var"
+RUNTIME_DIR="$ROOT_PREFIX/var/run/rp2040-fan-control"
+if [ -L "$ROOT_PREFIX/var/run" ]; then
+  [ "$(readlink "$ROOT_PREFIX/var/run")" = /run ] || { echo "ERROR: enlace /var/run inesperado" >&2; exit 1; }
+  RUNTIME_DIR="$ROOT_PREFIX/run/rp2040-fan-control"
+fi
+assert_no_symlink_path "$RUNTIME_DIR"
+if pgrep -f -- "$APP/rp2040_fan_control_webui_dev.py" >/dev/null 2>&1; then
+  echo "ERROR: hay un daemon activo; deténgalo antes de instalar" >&2
+  exit 1
+fi
+if [ -e "$P/ENABLE" ]; then
+  [ -f "$P/ENABLE" ] || { echo "ERROR: ENABLE no es un archivo regular" >&2; exit 1; }
+  if [ -e "$WRAPPER" ] || [ -e "$RUNTIME_DIR" ]; then
+    echo "ERROR: existe ENABLE y hay runtime instalado; detenga el servicio antes de actualizar" >&2
+    exit 1
+  fi
+  echo "Restauración de runtime con ENABLE conservado; el evento startup iniciará el daemon."
+fi
+if [ -x "$WRAPPER" ] && "$WRAPPER" status >/dev/null 2>&1; then echo "ERROR: el daemon está en ejecución; deténgalo antes de actualizar" >&2; exit 1; fi
+# Validate the host's sudoers include mechanism before changing installed files.
+[ -d "$ROOT_PREFIX/etc/sudoers.d" ] || { echo "ERROR: no existe /etc/sudoers.d; no se ha modificado nada" >&2; exit 1; }
+SUDOERS_MAIN="$ROOT_PREFIX/etc/sudoers"
+[ -r "$SUDOERS_MAIN" ] || { echo "ERROR: no se puede leer /etc/sudoers; no se ha modificado nada" >&2; exit 1; }
+grep -Eq '^[[:space:]]*#includedir[[:space:]]+/etc/sudoers.d([[:space:]]|$)|^[[:space:]]*@includedir[[:space:]]+/etc/sudoers.d([[:space:]]|$)' "$SUDOERS_MAIN" || { echo "ERROR: /etc/sudoers no incluye /etc/sudoers.d; no se ha modificado nada" >&2; exit 1; }
+command -v visudo >/dev/null 2>&1 || { echo "ERROR: visudo no está disponible; no se ha modificado nada" >&2; exit 1; }
+visudo -cf "$SRC_SUDOERS" >/dev/null 2>&1 || { echo "ERROR: reglas sudoers del paquete no válidas" >&2; exit 1; }
+# Capture the baseline in a private staging directory. Publish the marker only after
+# every backup has been copied and compared successfully; never trust a partial baseline.
+if [ ! -f "$BASE/baseline-created" ]; then
+  [ ! -e "$BASE" ] || { echo "ERROR: existe una copia base sin marcador; no se sobrescribe: $BASE" >&2; exit 1; }
+  BASE_STAGE="$TMP/baseline"
+  mkdir -p "$BASE_STAGE/files"
+  : > "$BASE_STAGE/manifest"
+  backup_path() {
+    key="$1"; dest="$2"
+    if [ -e "$dest" ]; then
+      [ -f "$dest" ] || { echo "ERROR: la ruta existente no es un archivo regular: $dest" >&2; return 1; }
+      mkdir -p "$BASE_STAGE/files/$(dirname "$key")"
+      cp -p "$dest" "$BASE_STAGE/files/$key" || return 1
+      cmp -s "$dest" "$BASE_STAGE/files/$key" || { echo "ERROR: la copia no coincide con el original: $dest" >&2; return 1; }
+      printf 'EXISTING\t%s\n' "$key" >> "$BASE_STAGE/manifest"
+    else
+      printf 'NEW\t%s\n' "$key" >> "$BASE_STAGE/manifest"
+    fi
+  }
+  backup_path usr/local/sbin/rp2040-fan-control "$WRAPPER"
+  backup_path usr/local/sbin/rp2040-fan-control-webui "$HELPER"
+  backup_path usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php "$PAGE"
+backup_path usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page "$PAGE_ENTRY"
+backup_path usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png "$PAGE_ICON"
+backup_path usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart "$STARTUP_EVENT"
+  backup_path etc/sudoers.d/rp2040-fan-control-webui "$SUDOERS"
+  while IFS= read -r -d '' src; do
+    rel="${src#"$SRC_APP"/}"
+    [ "$rel" = "fan_control/site_config_local.py" ] && continue
+    dest="$APP/$rel"
+    if [ -e "$dest" ]; then
+      [ -f "$dest" ] || { echo "ERROR: la ruta existente no es un archivo regular: $dest" >&2; exit 1; }
+      mkdir -p "$BASE_STAGE/files/app/$(dirname "$rel")"
+      cp -p "$dest" "$BASE_STAGE/files/app/$rel" || { echo "ERROR: no se pudo copiar $dest" >&2; exit 1; }
+      cmp -s "$dest" "$BASE_STAGE/files/app/$rel" || { echo "ERROR: la copia no coincide con el original: $dest" >&2; exit 1; }
+      printf 'EXISTING_APP\t%s\n' "$rel" >> "$BASE_STAGE/manifest"
+    else
+      printf 'NEW_APP\t%s\n' "$rel" >> "$BASE_STAGE/manifest"
+    fi
+  done < <(find "$SRC_APP" -type f -print0)
+  chmod 0700 "$BASE_STAGE" "$BASE_STAGE/files"
+  chmod 0600 "$BASE_STAGE/manifest"
+  ( cd "$BASE_STAGE" && { sha256sum manifest; find files -type f -print0 | sort -z | xargs -0 -r sha256sum; } > SHA256SUMS ) || { echo "ERROR: no se pudo generar SHA256SUMS; no se publica la copia base" >&2; exit 1; }
+  chmod 0600 "$BASE_STAGE/SHA256SUMS"
+  ( cd "$BASE_STAGE" && sha256sum -c SHA256SUMS >/dev/null ) || { echo "ERROR: la copia base temporal no supera SHA-256" >&2; exit 1; }
+  : > "$BASE_STAGE/baseline-created"
+  chmod 0600 "$BASE_STAGE/baseline-created"
+  mkdir -p "$(dirname "$BASE")"
+  mv "$BASE_STAGE" "$BASE" || { echo "ERROR: no se pudo publicar la copia base completa" >&2; exit 1; }
+fi
+validate_baseline
+BASELINE_TOUCHED=1
+# Record the transaction BEFORE the first destination mutation. If power is lost mid-install,
+# the next invocation must restore the baseline instead of continuing over a mixed state.
+if [ ! -e "$recovery_journal" ]; then
+  printf 'recovery-v1\nstarted=%s\nsource=installer\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$recovery_journal" || { echo "ERROR: no se pudo crear diario antes de instalar" >&2; exit 1; }
+  chmod 0600 "$recovery_journal" || { echo "ERROR: no se pudieron proteger los permisos del diario" >&2; exit 1; }
+  sync
+fi
+# Install app without overwriting machine-local config, existing logs, or unrelated app files.
+mkdir -p "$APP"
+while IFS= read -r -d '' src; do
+  rel="${src#"$SRC_APP"/}"
+  [ "$rel" = "fan_control/site_config_local.py" ] && continue
+  mkdir -p "$APP/$(dirname "$rel")"
+  install -m 0644 "$src" "$APP/$rel"
+done < <(find "$SRC_APP" -type f -print0)
+LOCAL_CONFIG="$APP/fan_control/site_config_local.py"
+if [ -e "$LOCAL_CONFIG" ] || [ -L "$LOCAL_CONFIG" ]; then
+  [ -f "$LOCAL_CONFIG" ] && [ ! -L "$LOCAL_CONFIG" ] || { echo "ERROR: la configuración local existe pero no es un archivo regular; no se modifica: $LOCAL_CONFIG" >&2; exit 1; }
+else
+  # Journal this side effect before creating the file, so crash recovery knows to remove it.
+  printf 'local-config-created=1\n' >> "$recovery_journal" || { echo "ERROR: no se pudo registrar la creación de configuración local" >&2; exit 1; }
+  sync
+  LOCAL_CONFIG_CREATED=1
+  cp -p "$APP/fan_control/site_config.example.py" "$LOCAL_CONFIG"
+  chmod 0600 "$LOCAL_CONFIG"
+  echo "AVISO: se creó configuración local desde el ejemplo; no contiene asignaciones reales y el daemon seguirá desactivado."
+fi
+install -m 0755 "$SRC_WRAPPER" "$WRAPPER"
+install -m 0755 "$SRC_HELPER" "$HELPER"
+mkdir -p "$(dirname "$PAGE")"
+install -m 0644 "$SRC_PAGE" "$PAGE"
+install -m 0644 "$SRC_PAGE_ENTRY" "$PAGE_ENTRY"
+mkdir -p "$(dirname "$PAGE_ICON")"
+install -m 0644 "$SRC_PAGE_ICON" "$PAGE_ICON"
+mkdir -p "$(dirname "$STARTUP_EVENT")"
+mkdir -p "$(dirname "$STARTUP_EVENT")"
+install -m 0755 "$SRC_STARTUP_EVENT" "$STARTUP_EVENT"
+# Install sudoers drop-in, then validate the complete policy. Restore prior file on any validation failure.
+mkdir -p "$(dirname "$SUDOERS")"
+install -m 0440 "$SRC_SUDOERS" "$SUDOERS"
+if ! visudo -c >/dev/null 2>&1; then
+  echo "ERROR: validación global de sudoers falló; restaurando la regla anterior" >&2
+  if awk -F '\t' '$1=="EXISTING" && $2=="etc/sudoers.d/rp2040-fan-control-webui" {found=1} END {exit !found}' "$BASE/manifest"; then
+    cp -p "$BASE/files/etc/sudoers.d/rp2040-fan-control-webui" "$SUDOERS" || { echo "ERROR CRÍTICO: no se pudo restaurar el sudoers anterior; revisa $BASE/files/etc/sudoers.d/rp2040-fan-control-webui" >&2; exit 1; }
+  elif awk -F '\t' '$1=="NEW" && $2=="etc/sudoers.d/rp2040-fan-control-webui" {found=1} END {exit !found}' "$BASE/manifest"; then
+    rm -f "$SUDOERS" || { echo "ERROR CRÍTICO: no se pudo retirar el sudoers nuevo" >&2; exit 1; }
+  else
+    echo "ERROR CRÍTICO: el manifiesto no identifica el estado previo de sudoers" >&2
+    exit 1
+  fi
+  exit 1
+fi
+# Confirm the web user can invoke only a non-mutating helper action.
+if ! sudo -n -l -U nobody "$HELPER" status >/dev/null 2>&1; then
+  echo "ERROR: sudo no autoriza al usuario nobody como se esperaba; revisa la política" >&2
+  exit 1
+fi
+chmod 0700 "$P/backup" "$BASE" "$BASE/files"
+chmod 0600 "$BASE/manifest" "$BASE/SHA256SUMS" "$BASE/baseline-created"
+# Installation is committed only after every file and policy check passed. Removing the
+# journal is the final durable step; if it fails, EXIT cleanup attempts a verified rollback.
+rm -f "$recovery_journal" || { echo "ERROR: no se pudo retirar el diario; instalación no confirmada" >&2; exit 1; }
+sync
+COMMIT=1
+echo "Integración instalada. Copia base para reversión: $BASE"
+echo "WebUI actualizada; auxiliar con acciones limitadas instalado."
+echo "Daemon NO iniciado por instalación; ENABLE conservado si existe; inicio automático mediante startup. Firmware, config.json y logs locales conservados."
+
+  

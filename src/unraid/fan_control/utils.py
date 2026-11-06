@@ -16,42 +16,95 @@ def run_cmd(cmd, timeout=5):
         return ""
 
 
-def cpu_temperature():
-    """
-    Lee directamente el sensor x86_pkg_temp.
-    Devuelve grados Celsius o None.
-    """
-
+def _read_temperature(path):
+    """Read a Linux thermal sysfs value (millidegrees Celsius)."""
     try:
-        base = "/sys/class/thermal"
-
-        for name in os.listdir(base):
-            if not name.startswith("thermal_zone"):
-                continue
-
-            zone = os.path.join(base, name)
-
-            try:
-                with open(os.path.join(zone, "type"), "r") as f:
-                    zone_type = f.read().strip()
-
-                if zone_type != "x86_pkg_temp":
-                    continue
-
-                with open(os.path.join(zone, "temp"), "r") as f:
-                    raw = int(f.read().strip())
-
-                temp = raw / 1000.0
-
-                if -20 <= temp <= 120:
-                    return int(round(temp))
-
-            except Exception:
-                continue
-
-    except Exception:
+        with open(path, "r", encoding="ascii") as stream:
+            temp = int(stream.read().strip()) / 1000.0
+        if -20 <= temp <= 120:
+            return int(temp + 0.5) if temp >= 0 else int(temp - 0.5)
+    except (OSError, ValueError, TypeError):
         pass
+    return None
 
+
+def cpu_temperature(hwmon_base="/sys/class/hwmon", thermal_base="/sys/class/thermal"):
+    """Return CPU package/control temperature in Celsius, or None.
+
+    Prefer a clearly identified CPU hwmon sensor (AMD k10temp Tctl or
+    Intel coretemp Package id 0). Do not mistake NVMe, GPU, DIMM or
+    motherboard sensors for the CPU. Fall back to x86_pkg_temp thermal zones.
+    Optional base paths allow deterministic tests without real hardware.
+    """
+    candidates = []
+    try:
+        names = sorted(os.listdir(hwmon_base))
+    except OSError:
+        names = []
+
+    for hwmon in names:
+        if not hwmon.startswith("hwmon"):
+            continue
+        directory = os.path.join(hwmon_base, hwmon)
+        try:
+            with open(os.path.join(directory, "name"), "r", encoding="ascii") as stream:
+                driver = stream.read().strip().lower()
+        except OSError:
+            continue
+
+        try:
+            inputs = sorted(name for name in os.listdir(directory)
+                            if name.startswith("temp") and name.endswith("_input"))
+        except OSError:
+            continue
+
+        for input_name in inputs:
+            stem = input_name[:-6]
+            label = ""
+            try:
+                with open(os.path.join(directory, stem + "_label"), "r", encoding="utf-8") as stream:
+                    label = stream.read().strip().lower()
+            except OSError:
+                pass
+
+            priority = None
+            if driver == "k10temp" and label == "tctl":
+                priority = 0
+            elif driver == "coretemp" and label in ("package id 0", "package"):
+                priority = 0
+            elif label == "tctl" and driver in ("k10temp", "zenpower"):
+                priority = 1
+            elif driver in ("k10temp", "zenpower") and not label:
+                priority = 2
+            if priority is not None:
+                value = _read_temperature(os.path.join(directory, input_name))
+                if value is not None:
+                    candidates.append((priority, hwmon, input_name, value))
+
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        return candidates[0][3]
+
+    # Compatibility fallback for systems exposing Intel package temperature
+    # through thermal_zone rather than hwmon.
+    try:
+        zones = sorted(os.listdir(thermal_base))
+    except OSError:
+        zones = []
+    for name in zones:
+        if not name.startswith("thermal_zone"):
+            continue
+        zone = os.path.join(thermal_base, name)
+        try:
+            with open(os.path.join(zone, "type"), "r", encoding="ascii") as stream:
+                zone_type = stream.read().strip()
+            if zone_type != "x86_pkg_temp":
+                continue
+            value = _read_temperature(os.path.join(zone, "temp"))
+            if value is not None:
+                return value
+        except OSError:
+            continue
     return None
 
 

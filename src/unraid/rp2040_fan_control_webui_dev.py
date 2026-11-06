@@ -8,7 +8,6 @@
 
 import os
 import time
-
 from fan_control.instance_lock import acquire_instance_lock as _acquire_instance_lock
 
 # Stable runtime path: never place the lock inside the replaceable app directory.
@@ -47,7 +46,7 @@ from fan_control.diagnostics import (
     format_smart_summary,
     format_summary,
 )
-from fan_control.temperature import read_temperatures as module_read_temperatures, detect_disks as module_detect_disks, unraid_id_for_identity
+from fan_control.temperature import read_temperatures as module_read_temperatures, detect_disks as module_detect_disks, unraid_id_for_identity, group_source_warnings
 from fan_control.utils import (
     cpu_temperature,
     system_info,
@@ -59,7 +58,8 @@ from fan_control.utils import (
 )
 from fan_control.fan_controller import FanController
 from fan_control.serial_manager import SerialManager
-from fan_control.ipc import RuntimeIPC, acknowledge_transmitted_mode
+from fan_control.ipc import RuntimeIPC, finalize_mode_request
+from fan_control.version import __version__
 
 BAUDRATE = 115200
 
@@ -74,10 +74,9 @@ SUMMARY_INTERVAL = 300
 # Identificacion persistente mediante modelo + numero de serie
 # ============================================================
 
-from fan_control.site_config_local import FAN1_DISKS, FAN2_DISKS, validate_disk_config
+from fan_control.configuration import load_configuration
 
-validate_disk_config()
-
+FAN1_DISKS, FAN2_DISKS, FAN1_USE_CPU, FAN2_USE_CPU = load_configuration()
 ALL_DISKS = FAN1_DISKS | FAN2_DISKS
 
 # ============================================================
@@ -153,6 +152,7 @@ smart_last_read = None
 smart_disk_count = 0
 smart_valid_count = 0
 smart_error_count = 0
+source_warning_previous = {"fan1": None, "fan2": None}
 
 # V2.7 - gestion inteligente por tendencia termica.
 # Se actualizan solamente con lecturas SMART validas.
@@ -249,19 +249,15 @@ def disk_state(identity):
 # TEMPERATURA POR GRUPO
 # ============================================================
 
-def group_temperature(group):
-
-    values = []
-
-    for identity in group:
-
-        if identity in temps:
-            values.append(temps[identity])
-
-    if not values:
-        return None
-
-    return max(values)
+def group_temperature(group, use_cpu=False):
+    """Maximum valid temperature among selected HDDs and optional CPU."""
+    values = [temps[identity] for identity in group if identity in temps]
+    if use_cpu:
+        cpu = cpu_temperature()
+        if cpu is not None:
+            values.append(cpu)
+    # None is deliberately fail-safe: FanController commands 100% without a source.
+    return max(values) if values else None
 
 
 # ============================================================
@@ -391,21 +387,9 @@ def update_v28_temperature_stats(group, temperature, fan_value):
 
 
 def disk_text(identity):
-
-    model, serial = identity
-
-    names = {
-        "ST500LT012-1DG142": "ST500",
-        "HGST HTS541010A9E680": "HGST",
-        "TOSHIBA MQ01ABF050": "TOSHIBA",
-        "ST1000NX0423         00YK025D7A01874LEN": "ST1000",
-        "ST1000NX0423": "ST1000",
-    }
-
-    return names.get(
-        model,
-        model[:8]
-    )
+    """Use the runtime model for a short label, without per-installation aliases."""
+    model, _ = identity
+    return model[:8]
 
 
 def format_disk_status_summary():
@@ -465,8 +449,8 @@ def storage_lines():
 
 def storage_page():
 
-    t1 = group_temperature(FAN1_DISKS)
-    t2 = group_temperature(FAN2_DISKS)
+    t1 = group_temperature(FAN1_DISKS, FAN1_USE_CPU)
+    t2 = group_temperature(FAN2_DISKS, FAN2_USE_CPU)
 
     l1 = "F1 %sC" % (
         "--" if t1 is None else t1
@@ -490,8 +474,8 @@ def thermal_alert():
     Devuelve None si todo esta dentro de limites.
     """
 
-    t1 = group_temperature(FAN1_DISKS)
-    t2 = group_temperature(FAN2_DISKS)
+    t1 = group_temperature(FAN1_DISKS, FAN1_USE_CPU)
+    t2 = group_temperature(FAN2_DISKS, FAN2_USE_CPU)
     cpu = cpu_temperature()
 
     # --------------------------------------------------------
@@ -553,8 +537,8 @@ def thermal_alert():
 
 def build_packet():
 
-    t1 = group_temperature(FAN1_DISKS)
-    t2 = group_temperature(FAN2_DISKS)
+    t1 = group_temperature(FAN1_DISKS, FAN1_USE_CPU)
+    t2 = group_temperature(FAN2_DISKS, FAN2_USE_CPU)
 
     cpu = cpu_temperature()
     ram = ram_info()
@@ -861,18 +845,16 @@ def main():
         # Solicitudes del panel: se aplican dentro del bucle del daemon.
         # Se procesan después de los botones físicos del RP2040, por lo que
         # una solicitud web válida tiene prioridad durante este ciclo.
-        mode_before_web_request = None
         if runtime_ipc is not None:
             try:
                 request = runtime_ipc.take_mode_request()
                 if request is not None:
                     requested_mode = request["mode"]
                     if requested_mode in (MODE_AUTO, MODE_SILENT, MODE_TURBO):
-                        # Keep the physical-button mode as rollback state until
-                        # the serial write succeeds outside fail-safe.
-                        mode_before_web_request = CURRENT_MODE
+                        previous_mode = CURRENT_MODE
                         CURRENT_MODE = requested_mode
-                        pending_mode_request = request
+                        pending_mode_request = dict(request)
+                        pending_mode_request["previous_mode"] = previous_mode
                         log_info(LOGGER, "CONTROL", "MODE solicitado desde panel: %s" % CURRENT_MODE)
                     else:
                         runtime_ipc.acknowledge_mode_request(
@@ -908,8 +890,8 @@ def main():
                 temps = newtemps
 
                 # V2.8 - contar cada tendencia solo una vez por lectura SMART.
-                new_fan1_temperature = group_temperature(FAN1_DISKS)
-                new_fan2_temperature = group_temperature(FAN2_DISKS)
+                new_fan1_temperature = group_temperature(FAN1_DISKS, FAN1_USE_CPU)
+                new_fan2_temperature = group_temperature(FAN2_DISKS, FAN2_USE_CPU)
 
                 if fan1_temperature_previous is not None and new_fan1_temperature is not None:
                     delta1 = new_fan1_temperature - fan1_temperature_previous
@@ -964,7 +946,7 @@ def main():
             last_disk_state_check = now
 
         # FAN1
-        t1 = group_temperature(FAN1_DISKS)
+        t1 = group_temperature(FAN1_DISKS, FAN1_USE_CPU)
         raw_target1 = fan_controller.mode_temperature_to_fan(
             t1,
             CURRENT_MODE,
@@ -996,11 +978,11 @@ def main():
             log_info(
                 LOGGER,
                 "CONTROL",
-                "FAN1 objetivo: %s%% -> %s%% | temperatura=%.1fC | motivo=%s"
+                "FAN1 objetivo: %s%% -> %s%% | temperatura=%sC | motivo=%s"
                 % (
                     fan1_target_previous,
                     target1,
-                    t1,
+                    "--" if t1 is None else "%.1f" % t1,
                     reason1,
                 )
             )
@@ -1008,7 +990,7 @@ def main():
         fan1_target_previous = target1
 
         # FAN2
-        t2 = group_temperature(FAN2_DISKS)
+        t2 = group_temperature(FAN2_DISKS, FAN2_USE_CPU)
         raw_target2 = fan_controller.mode_temperature_to_fan(
             t2,
             CURRENT_MODE,
@@ -1040,25 +1022,46 @@ def main():
             log_info(
                 LOGGER,
                 "CONTROL",
-                "FAN2 objetivo: %s%% -> %s%% | temperatura=%.1fC | motivo=%s"
+                "FAN2 objetivo: %s%% -> %s%% | temperatura=%sC | motivo=%s"
                 % (
                     fan2_target_previous,
                     target2,
-                    t2,
+                    "--" if t2 is None else "%.1f" % t2,
                     reason2,
                 )
             )
 
         fan2_target_previous = target2
 
-        fan1_current = fan_controller.smooth(
+        # Report source loss only when the warning set changes; partial HDD/CPU
+        # source loss does not discard valid readings from the remaining sources.
+        cpu_for_warnings = cpu_temperature()
+        for fan_key, group, use_cpu in (
+            ("fan1", FAN1_DISKS, FAN1_USE_CPU),
+            ("fan2", FAN2_DISKS, FAN2_USE_CPU),
+        ):
+            current_warnings = tuple(group_source_warnings(
+                group, disk_paths, temps, use_cpu, cpu_for_warnings
+            ))
+            if current_warnings != source_warning_previous[fan_key]:
+                if current_warnings:
+                    log_warning(LOGGER, "THERMAL_SOURCE", "%s: %s" % (
+                        fan_key.upper(), "; ".join(current_warnings)
+                    ))
+                elif source_warning_previous[fan_key]:
+                    log_info(LOGGER, "THERMAL_SOURCE", "%s: todas las fuentes configuradas vuelven a estar disponibles" % fan_key.upper())
+                source_warning_previous[fan_key] = current_warnings
+
+        fan1_current = fan_controller.smooth_control_output(
             fan1_current,
-            target1
+            target1,
+            t1,
         )
 
-        fan2_current = fan_controller.smooth(
+        fan2_current = fan_controller.smooth_control_output(
             fan2_current,
-            target2
+            target2,
+            t2,
         )
 
         # V2.8 - registrar estadisticas sin alterar el control.
@@ -1121,13 +1124,6 @@ def main():
         )
 
         tx_ok = serial_manager.send(packet)
-        mode_transmission_ok = tx_ok and not serial_manager.fail_safe
-        if pending_mode_request is not None and not mode_transmission_ok:
-            # A failed write must not leave the requested web mode as the
-            # daemon's logical state. Preserve any physical-button change.
-            if mode_before_web_request is not None:
-                CURRENT_MODE = mode_before_web_request
-
         if not tx_ok:
 
             log_warning(
@@ -1156,9 +1152,13 @@ def main():
         # El firmware actual no devuelve ACK; esto no prueba que el RP2040 procesara el paquete.
         if runtime_ipc is not None and pending_mode_request is not None:
             try:
-                acknowledge_transmitted_mode(
-                    runtime_ipc, pending_mode_request, CURRENT_MODE,
-                    tx_ok, serial_manager.fail_safe
+                CURRENT_MODE = finalize_mode_request(
+                    runtime_ipc,
+                    pending_mode_request,
+                    pending_mode_request.get("previous_mode", CURRENT_MODE),
+                    CURRENT_MODE,
+                    tx_ok,
+                    serial_manager.fail_safe,
                 )
             except Exception as exc:
                 log_warning(LOGGER, "IPC", "No se pudo confirmar solicitud web: %s" % exc)
@@ -1174,9 +1174,18 @@ def main():
                     round(now_status - serial_manager.last_tx_ok, 1)
                     if serial_manager.last_tx_ok else None
                 )
+                status_cpu_temp = cpu_temperature()
                 status = {
                     "schema_version": 1,
-                    "daemon": {"state": "running", "version": "3.0-integrated-dev", "pid": os.getpid()},
+                    "source_warnings": {
+                        "fan1": group_source_warnings(
+                            FAN1_DISKS, disk_paths, temps, FAN1_USE_CPU, status_cpu_temp
+                        ),
+                        "fan2": group_source_warnings(
+                            FAN2_DISKS, disk_paths, temps, FAN2_USE_CPU, status_cpu_temp
+                        ),
+                    },
+                    "daemon": {"state": "running", "version": __version__, "pid": os.getpid()},
                     "mode": CURRENT_MODE,
                     "fans": {
                         "fan1": {
@@ -1190,7 +1199,7 @@ def main():
                             "target_percent": target2,
                         },
                     },
-                    "cpu_temperature_c": cpu_temperature(),
+                    "cpu_temperature_c": status_cpu_temp,
                     "serial": {
                         "state": serial_manager.state,
                         "connected": bool(serial_manager.connected),
@@ -1261,8 +1270,8 @@ def main():
                     serial_manager.reconnect_count,
                     fan1_current,
                     fan2_current,
-                    group_temperature(FAN1_DISKS),
-                    group_temperature(FAN2_DISKS),
+                    group_temperature(FAN1_DISKS, FAN1_USE_CPU),
+                    group_temperature(FAN2_DISKS, FAN2_USE_CPU),
                     smart_disk_count,
                     smart_valid_count,
                     disk_status_text,

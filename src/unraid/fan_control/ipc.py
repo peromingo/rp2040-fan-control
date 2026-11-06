@@ -36,11 +36,13 @@ class RuntimeIPC:
         self.result_path = self.runtime_dir / "command-result.json"
         self.seen_path = self.runtime_dir / "seen-requests.json"
         self.request_max_age = int(request_max_age)
+        # A transient result-file error must not silently discard the result.
+        # Keep one result in memory and retry it on subsequent control-loop calls.
+        self._pending_result: dict[str, Any] | None = None
 
     def ensure_runtime_dir(self) -> None:
-        # The service wrapper creates this directory as root. Re-check the
-        # final path here as well, so a symlink or writable-by-others directory
-        # cannot slip through between the wrapper check and daemon startup.
+        # The service wrapper creates this directory as root. Re-check it at
+        # daemon startup so ownership and permissions cannot silently weaken IPC.
         self.runtime_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
         try:
             info = self.runtime_dir.lstat()
@@ -52,9 +54,8 @@ class RuntimeIPC:
             raise PermissionError("El directorio IPC permite escritura de grupo/otros; se rechaza.")
         if os.geteuid() == 0 and info.st_uid != 0:
             raise PermissionError("El directorio IPC existente no pertenece a root; se rechaza.")
-        # Never chmod/chown an existing directory: the administrator must
-        # resolve ownership/permissions explicitly. The wrapper performs the
-        # same checks before launching the service.
+        # Never chmod/chown an existing directory here. An administrator must
+        # correct unsafe ownership or permissions explicitly.
 
     def _atomic_json(self, destination: Path, payload: dict[str, Any], mode: int = 0o640) -> None:
         self.ensure_runtime_dir()
@@ -77,7 +78,8 @@ class RuntimeIPC:
             raise
 
     def publish_status(self, status: dict[str, Any]) -> bool:
-        """Atomically publish a JSON snapshot; return False on I/O/encoding errors."""
+        """Atomically publish status; also retry any pending IPC result."""
+        self.retry_pending_result()
         payload = dict(status)
         payload.setdefault("schema_version", 1)
         payload.setdefault("timestamp", time.time())
@@ -89,7 +91,7 @@ class RuntimeIPC:
             return False
 
     def _write_result(self, request_id: str | None, ok: bool, message: str,
-                      applied_mode: str | None = None) -> None:
+                      applied_mode: str | None = None) -> bool:
         result: dict[str, Any] = {
             "schema_version": 1,
             "request_id": request_id,
@@ -99,11 +101,28 @@ class RuntimeIPC:
         }
         if applied_mode is not None:
             result["applied_mode"] = applied_mode
+        # Never overwrite an older unpersisted result with a newer one.
+        if self._pending_result is not None:
+            if not self.retry_pending_result():
+                return False
         try:
             self._atomic_json(self.result_path, result)
+            return True
         except (OSError, TypeError, ValueError):
-            # Acknowledgement failure is reported by absence/staleness of result.
-            pass
+            # Fan control continues; the result remains queued for a later retry.
+            self._pending_result = result
+            return False
+
+    def retry_pending_result(self) -> bool:
+        """Retry a failed result publication without retransmitting serial data."""
+        if self._pending_result is None:
+            return True
+        try:
+            self._atomic_json(self.result_path, self._pending_result)
+        except (OSError, TypeError, ValueError):
+            return False
+        self._pending_result = None
+        return True
 
     def _load_seen_requests(self) -> dict[str, float]:
         try:
@@ -124,6 +143,12 @@ class RuntimeIPC:
         CURRENT_MODE itself. The caller must apply it in the main control loop
         and call acknowledge_mode_request after the mode is applied.
         """
+        # Do not consume another request while a previous result is still not
+        # durable: the protocol has one result.json slot, so overwriting would
+        # make the earlier request permanently unobservable to the WebUI.
+        if not self.retry_pending_result():
+            return None
+
         # Atomically claim the request before reading it. A plain read()+unlink()
         # can delete a newer request if PHP replaces command.json between the two.
         processing_path = self.runtime_dir / (
@@ -203,10 +228,45 @@ class RuntimeIPC:
                            applied_mode if ok else None)
 
 
+def finalize_mode_request(runtime_ipc: RuntimeIPC, request: dict[str, str],
+                          previous_mode: str, current_mode: str,
+                          tx_ok: bool, fail_safe: bool) -> str:
+    """Finalize a web mode request consistently with the serial outcome.
+
+    A failed transmission must not leave the requested mode selected, because
+    the normal loop would then transmit it later after reconnecting even though
+    the UI already reported failure. Restore the previous mode when this
+    request still owns CURRENT_MODE. Success means only that the serial write
+    succeeded; the firmware currently has no acknowledgement protocol.
+    """
+    request_id = request.get("request_id")
+    requested_mode = request.get("mode")
+
+    if tx_ok and not fail_safe and current_mode == requested_mode:
+        runtime_ipc.acknowledge_mode_request(
+            request_id, requested_mode, True,
+            "Modo aceptado por el daemon y transmitido por serie; el firmware no devuelve ACK."
+        )
+        return current_mode
+
+    if current_mode == requested_mode:
+        current_mode = previous_mode
+
+    if not tx_ok or fail_safe:
+        message = "El daemon no pudo transmitir el modo por serie; se mantiene fail-safe."
+    else:
+        message = "La solicitud fue sustituida antes de confirmar el modo transmitido."
+
+    runtime_ipc.acknowledge_mode_request(
+        request_id, requested_mode, False, message
+    )
+    return current_mode
+
+
 def acknowledge_transmitted_mode(runtime_ipc: RuntimeIPC, request: dict[str, str],
                                  applied_mode: str, tx_ok: bool,
                                  fail_safe: bool) -> None:
-    """Acknowledge a mode only after successful serial transmission.
+    """Compatibility helper for callers that already finalized the mode.
 
     This confirms daemon acceptance and serial write only. It does not imply
     that the RP2040 received or acted on the packet; the current firmware has

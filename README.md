@@ -1,74 +1,54 @@
-# RP2040 SATA HAT — Unraid fan-control daemon
+# RP2040 SATA HAT fan control for Unraid
 
-Public development work copy. This is **not an installer** and must not be pointed at a live system without review.
+Development controller and WebUI for RP2040 fan control. The firmware does not return serial ACK: a successful command confirms daemon acceptance and a completed serial write, not measured fan RPM.
 
-## Source provenance
+The source-built review candidate is **0.8.0-source-rc1**. Its runtime combines persistent JSON disk/CPU assignments, serial-port selection, live WebUI, source warnings and opt-in boot startup with protected instance locking and Python interpreter diagnostics. It is not a stable release; this consolidated runtime requires target validation.
 
-- `firmware/rp2040/main.py` is the verified RP2040 readback. Its SHA-256 is `1ad0cf8ef9a6b996bdc1c07c799d9c9c72f7aff159b1f933c3cb6ffd8a3e314f`.
-- The recovered active Unraid daemon had SHA-256 `cc05574e9ae8f4ec2c9f43f83b029638d7ecc06e25c3aa4c09ac1ee6c0083a65`. The public daemon is a portable staging adaptation and is not byte-identical to that production daemon.
-- The ten recovered `fan_control` module hashes were verified. The public `config.py` is intentionally adapted for configurable paths. The production daemon with real disk identities is not included.
+## Build the installable review PLG
 
-## Before running
-
-1. Review the source and install dependencies from `requirements.txt` (including `pyserial`) in a test environment.
-2. Copy `src/unraid/fan_control/site_config.example.py` to `src/unraid/fan_control/site_config_local.py`.
-3. Replace every `REPLACE_WITH_...` value with the exact disk model and serial reported by your Unraid host.
-4. Keep `site_config_local.py` out of Git. It is listed in `.gitignore`.
-5. Configure `RP2040_BASE_DIR`, `RP2040_LOG_DIR`, and optionally `RP2040_LOCK_FILE` for deployment.
-6. Test with the daemon disconnected from the production controller first.
-
-**Safety:** Do not start this copy on the production Unraid host yet. It has not undergone full integration testing and is not a validated replacement for the active installation.
-
-## Initial layout
-
-- `firmware/rp2040/main.py` — verified RP2040 firmware readback
-- `src/unraid/rp2040_fan_control.py` — portable daemon staging copy
-- `src/unraid/fan_control/` — Python package and example disk configuration
-- `docs/` — source baseline and publication checklist
-- `tests/` — portable tests
-
-### Pruebas locales
-
-Desde la raíz del repositorio, con Python 3 y PHP CLI (para las pruebas PHP):
+With Python 3.11 or newer:
 
 ```sh
-PYTHONPATH=src/unraid python -m unittest discover -s tests -v
+python3 tools/build_integration_plg.py /tmp/rp2040-source-rc1
 ```
 
-Las pruebas de ciclo usan un `SerialManager` simulado y directorios temporales; no abren el puerto serie ni deben ejecutarse contra el RP2040.
+The builder downloads the official pyserial 3.5 wheel if necessary and checks its pinned SHA-256 before packaging. For an offline build, supply `--wheel /path/to/pyserial-3.5-py2.py3-none-any.whl`. No pip installation is performed on Unraid.
 
+Outputs include the self-contained `.plg`, its `.sha256`, `payload.tar.gz`, and inspectable installation/removal scripts. The payload is built directly from `src/unraid`, `plugin/src` and `plugin/scripts`. Transaction templates live in `plugin/templates`. The verifier compares every extracted file, permission and installer block against its source or the pinned dependency wheel. A `build-manifest.json` is included in the app payload.
 
-## WebUI / IPC (prototipo de desarrollo)
+The legacy `rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg` basename is deliberately retained for the existing integration-plugin upgrade path. The internal version identifies the candidate. Do not install additional copies under alternative basenames.
 
-El paquete incluye una página experimental para Unraid y un adaptador IPC JSON. La página muestra estado, temperaturas y comandos FAN1/FAN2, y permite solicitar los modos AUTO/SILENT/TURBO. La confirmación solo indica que el daemon aceptó la solicitud y transmitió el paquete por serie; el firmware actual no devuelve ACK.
+```sh
+python3 tools/build_integration_plg.py /tmp/rp2040-source-rc1 \
+  --wheel /path/to/pyserial-3.5-py2.py3-none-any.whl \
+  --verify /tmp/rp2040-source-rc1/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
+```
 
-La integración WebUI/IPC dispone de una plantilla de plugin (plugin/rp2040-fan-control.plg.in), un generador de .plg y un instalador del paquete. Todavía no existe una versión instalable validada para producción: faltan la publicación de los artefactos con URLs y SHA-256 reales, la validación de permisos en una versión concreta de Unraid y las pruebas aisladas de instalación, actualización, recuperación y desinstalación. El daemon integrado src/unraid/rp2040_fan_control_webui_dev.py sigue siendo una copia de desarrollo y no debe desplegarse en producción.
+## Development checks
 
-### Validación del prototipo WebUI/IPC
+Install `requirements.txt` in a development environment. PHP CLI enables the PHP integration tests.
 
-Las pruebas de desarrollo cubren la validación de solicitudes, la prevención de repetición, la publicación PHP concurrente, la compatibilidad del JSON PHP→Python, los permisos no world-writable y la confirmación condicionada a la transmisión serie. El workflow de GitHub Actions ejecuta estas comprobaciones en Python 3.11 y 3.12, además de validar la sintaxis PHP y Shell, auditar los archivos de publicación y comprobar la generación reproducible del paquete. Antes de integrar cambios, debe verificarse que todos los trabajos de la última ejecución relevante hayan terminado correctamente. Una CI satisfactoria no sustituye las pruebas en una VM de Unraid ni valida los permisos reales de emhttp.
+```sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/unraid \
+  RP2040_TEST_WHEEL=/path/to/pyserial-3.5-py2.py3-none-any.whl \
+  python3 -m unittest discover -s tests -v
+python3 tools/test_boot_candidate.py /tmp/rp2040-source-rc1
+```
 
+Tests use temporary filesystems and fake service/serial operations. They do not start hardware control. CI runs Python 3.11/3.12, PHP syntax and protocol checks, source/publication audits, lifecycle simulations, source/payload verification and deterministic rebuild comparison.
 
-### Wrapper de servicio (borrador)
+## Unraid lifecycle
 
-Se incluye `plugin/scripts/rp2040-fan-control` para revisión del ciclo de vida, pero todavía no es un instalador Unraid. El servicio no arranca salvo que exista el marcador `ENABLE`, haya una configuración local sin marcadores de ejemplo y estén disponibles Python, `pyserial` y `smartctl`. No se deben crear ese marcador ni probar el wrapper en el Unraid de producción durante esta fase.
+Manual installation requires the existing service stopped and ENABLE absent. Installation preserves configuration and logs and leaves the service disabled. The startup event starts only with ENABLE present and no pending recovery. On reboot the installer can restore missing RAM files while preserving ENABLE; enabled updates against an existing runtime are refused. The standard `/var/run -> /run` alias is supported.
 
-### Paquete de despliegue (solo revisión)
+Use the WebUI helper to stop the service before an update. Uninstall restores that candidate's verified baseline, removes ENABLE, and preserves persistent configuration/logs/backups. A failed recovery retains `recovery-pending` for inspection. First installation uses example placeholders and must be configured before starting.
 
-`tools/build_unraid_payload.sh` genera un archivo `*-payload.tar.gz` con la estructura prevista del payload y un SHA-256. `tools/audit_publication.py` comprueba que el árbol fuente y el payload no incluyan configuraciones locales, cachés compiladas ni artefactos de ejecución conocidos. **No es un `.plg`, no se instala con `installpkg` y no debe copiarse al Unraid de producción.** El diseño del instalador y las salvaguardas pendientes están documentados en `docs/INSTALLER-DESIGN.md`.
+The main WebUI route processes mutating forms through Unraid. Direct POST requests to the PHP live endpoint are rejected; direct GET polling is read-only. PHP invokes a fixed-action privileged helper under the supplied sudoers policy.
 
+## Publication
 
-## Preparación para publicación
+Integration artifacts auditfix21–24 are retained as historical candidates. The source-built candidate supersedes their build process; its runtime changes still need target validation. Automatic update checking (`pluginURL`) will be configured with a stable release channel. No stable release is published by this build command.
 
-Las instrucciones para preparar el repositorio sin publicar automáticamente nada están en `docs/GITHUB-PUBLICATION.md`. El proyecto incluye un workflow de GitHub Actions para pruebas, `CONTRIBUTING.md` y `SECURITY.md`. No hay aún un `.plg` instalable ni una URL de release.
+See `docs/SOURCE-PACKAGE-REVIEW.md`, `docs/GITHUB-PUBLICATION.md`, `CONTRIBUTING.md` and `SECURITY.md`. Source ownership/license/security review remains required for release approval. Firmware is included for reference; building/installing the Unraid package does not flash it.
 
-### Instalador Unraid (plantilla, no publicable aún)
-
-`plugin/rp2040-fan-control.plg.in` y `tools/render_unraid_plg.py` preparan el descriptor de instalación. El renderizador rechaza dominios reservados de ejemplo, URLs sin HTTPS, credenciales incrustadas y checksums inválidos. El renderizador exige URLs HTTPS reales y el SHA-256 del payload; no se ha generado un `.plg` de release porque el repositorio y sus URLs aún no existen. El payload incluye un helper que preserva `site_config_local.py` y logs durante actualizaciones, crea la configuración de ejemplo solo en la primera instalación y nunca habilita el daemon automáticamente. La desinstalación propuesta conserva la configuración persistente.
-
-**No instalar:** faltan pruebas con el plugin manager y el sistema de archivos reales de Unraid, y todavía no se han verificado los permisos PHP/emhttp para el IPC.
-
-
-### Comprobación de dependencias (solo diagnóstico)
-
-El wrapper de desarrollo acepta `check-deps` para mostrar el intérprete Python seleccionado, comprobar `pyserial` y localizar `smartctl`, sin instalar nada ni abrir el puerto serie. Si hay varios Python, se puede indicar el ejecutable mediante `RP2040_PYTHON` en una invocación manual o guardando su ruta absoluta en `/boot/config/plugins/rp2040-fan-control/python-path` (primera línea; el archivo no se ejecuta como shell). No se instala Python ni `pyserial` automáticamente. La dependencia debe prepararse y validarse primero en una VM de Unraid; véase `docs/INSTALLER-DESIGN.md`.
+The older `plugin/rp2040-fan-control.plg.in`, `tools/render_unraid_plg.py`, and `plugin/scripts/install-from-payload.sh` are historical prototype/reference code, not the deployment path for this candidate.

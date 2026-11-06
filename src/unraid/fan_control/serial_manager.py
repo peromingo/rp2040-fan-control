@@ -84,26 +84,55 @@ class SerialManager:
 
     def find_port(self):
         """
-        Busca primero el dispositivo estable de /dev/serial/by-id.
-        Si no existe, utiliza /dev/ttyACM*.
-        """
+        Selecciona el puerto del RP2040 sin elegir arbitrariamente.
 
-        by_id = glob.glob("/dev/serial/by-id/*")
+        Prioridad:
+        1. RP2040_SERIAL_PORT, si apunta a un dispositivo existente.
+        2. Un único dispositivo ttyACM identificado mediante by-id.
+        3. Un único /dev/ttyACM* si no hay candidato by-id.
+
+        Si hay varios candidatos y no existe una ruta explícita, devuelve
+        None: es preferible entrar en FAIL-SAFE a abrir un dispositivo ajeno.
+        """
+        configured = os.environ.get("RP2040_SERIAL_PORT", "").strip()
+        if configured:
+            if os.path.exists(configured):
+                return configured
+            self._log_warning(
+                "SERIAL",
+                "RP2040_SERIAL_PORT configurado pero no existe: %s" % configured,
+            )
+            return None
+
+        by_id = sorted(glob.glob("/dev/serial/by-id/*"))
+        candidates = []
 
         for device in by_id:
             try:
                 real = os.path.realpath(device)
-
-                if "ttyACM" in os.path.basename(real):
-                    return device
-
+                if os.path.basename(real).startswith("ttyACM"):
+                    candidates.append(device)
             except Exception:
                 continue
 
-        devices = sorted(glob.glob("/dev/ttyACM*"))
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            self._log_warning(
+                "SERIAL",
+                "Varios puertos ttyACM en /dev/serial/by-id; configure RP2040_SERIAL_PORT",
+            )
+            return None
 
-        if devices:
+        devices = sorted(glob.glob("/dev/ttyACM*"))
+        if len(devices) == 1:
             return devices[0]
+        if len(devices) > 1:
+            self._log_warning(
+                "SERIAL",
+                "Varios /dev/ttyACM*; configure RP2040_SERIAL_PORT para evitar selección ambigua",
+            )
+            return None
 
         return None
 
@@ -206,7 +235,12 @@ class SerialManager:
                 return False
 
         try:
-            self.port.write(packet.encode("ascii"))
+            payload = packet.encode("ascii")
+            written = self.port.write(payload)
+            if written != len(payload):
+                raise serial.SerialTimeoutException(
+                    "Escritura serie incompleta: %s/%s bytes" % (written, len(payload))
+                )
             self.port.flush()
 
             was_connected = self.connected

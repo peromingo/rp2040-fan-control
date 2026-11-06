@@ -1,0 +1,11 @@
+# Managed by RP2040 Fan Control plugin. Only fixed helper actions are allowed.
+nobody ALL=(root) NOPASSWD: \
+  /usr/local/sbin/rp2040-fan-control-webui status, \
+  /usr/local/sbin/rp2040-fan-control-webui inventory, \
+  /usr/local/sbin/rp2040-fan-control-webui get-config, \
+  /usr/local/sbin/rp2040-fan-control-webui serial-config, \
+  /usr/local/sbin/rp2040-fan-control-webui save-serial-port, \
+  /usr/local/sbin/rp2040-fan-control-webui save-config, \
+  /usr/local/sbin/rp2040-fan-control-webui start, \
+  /usr/local/sbin/rp2040-fan-control-webui stop, \
+  /usr/local/sbin/rp2040-fan-control-webui restart
