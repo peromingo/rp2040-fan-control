@@ -75,20 +75,27 @@ for i,original in enumerate(blocks):
    line=line.replace('"$PAGE_ICON" "$SUDOERS"','"$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS"')
    line=line.replace('[ -f "$SRC_PAGE_ICON" ] ||','[ -f "$SRC_PAGE_ICON" ] && [ -f "$SRC_STARTUP_EVENT" ] ||')
    out.append(line)
- b=''.join(out).replace('webui-integration-serial-port-conf-auditfix21','webui-integration-serial-port-conf-auditfix23')
+ b=''.join(out).replace('webui-integration-serial-port-conf-auditfix21','webui-integration-serial-port-conf-auditfix24')
  if i==0:
   old='# Refuse to change a running or explicitly enabled service.\n[ ! -e "$P/ENABLE" ] || { echo "ERROR: existe ENABLE; no se actualiza mientras el servicio está habilitado" >&2; exit 1; }'
   new='''# A missing RAM wrapper and IPC directory permit bootstrap after reboot.
 # Enabled manual upgrades on an already installed runtime remain prohibited.
 assert_no_symlink_path "$P/ENABLE"
-assert_no_symlink_path "$ROOT_PREFIX/var/run/rp2040-fan-control"
+# Accept only the standard /var/run -> /run alias; validate its real destination.
+assert_no_symlink_path "$ROOT_PREFIX/var"
+RUNTIME_DIR="$ROOT_PREFIX/var/run/rp2040-fan-control"
+if [ -L "$ROOT_PREFIX/var/run" ]; then
+  [ "$(readlink "$ROOT_PREFIX/var/run")" = /run ] || { echo "ERROR: enlace /var/run inesperado" >&2; exit 1; }
+  RUNTIME_DIR="$ROOT_PREFIX/run/rp2040-fan-control"
+fi
+assert_no_symlink_path "$RUNTIME_DIR"
 if pgrep -f -- "$APP/rp2040_fan_control_webui_dev.py" >/dev/null 2>&1; then
   echo "ERROR: hay un daemon activo; deténgalo antes de instalar" >&2
   exit 1
 fi
 if [ -e "$P/ENABLE" ]; then
   [ -f "$P/ENABLE" ] || { echo "ERROR: ENABLE no es un archivo regular" >&2; exit 1; }
-  if [ -e "$WRAPPER" ] || [ -e "$ROOT_PREFIX/var/run/rp2040-fan-control" ]; then
+  if [ -e "$WRAPPER" ] || [ -e "$RUNTIME_DIR" ]; then
     echo "ERROR: existe ENABLE y hay runtime instalado; detenga el servicio antes de actualizar" >&2
     exit 1
   fi
@@ -102,8 +109,8 @@ fi'''
   b=b.replace('Daemon NO iniciado; ENABLE NO creado; firmware NO modificado; config.json y logs locales conservados.','Daemon NO iniciado por instalación; ENABLE conservado si existe; inicio automático mediante startup. Firmware, config.json y logs locales conservados.')
  Path(root/f'candidate-block{i}.sh').write_text(b)
  s=s.replace(original,b)
-s=s.replace('0.7.14-final-ui-auditfix22-uninstall-verify','0.7.15-boot-auditfix23')
-s=s.replace('### Auditfix22:', '### Auditfix23: restauración de runtime y arranque automático\n    - Restaura archivos RAM durante el arranque conservando ENABLE.\n    - Inicia el daemon en startup solo si ENABLE existe y no hay recuperación pendiente.\n    - Incluye el gancho startup en la copia de reversión.\n    ### Auditfix22:',1)
+s=s.replace('0.7.14-final-ui-auditfix22-uninstall-verify','0.7.16-boot-auditfix24')
+s=s.replace('### Auditfix22:', '### Auditfix24: arranque con alias estándar de runtime\n    - Reconoce /var/run -> /run y valida el directorio real; rechaza otros enlaces.\n    - Conserva el soporte de restauración y startup del candidato anterior.\n    - Restaura archivos RAM durante el arranque conservando ENABLE.\n    - Inicia el daemon en startup solo si ENABLE existe y no hay recuperación pendiente.\n    - Incluye el gancho startup en la copia de reversión.\n    ### Auditfix22:',1)
 p=root/'rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg';p.write_text(s)
 (p.with_suffix('.plg.sha256')).write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n')
 print(p)

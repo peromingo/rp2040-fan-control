@@ -1,3 +1,5 @@
+> Superseded by auditfix24. Auditfix23 rejects the standard `/var/run -> /run` system alias during installation. Use the auditfix24 candidate for boot validation.
+
 # Auditfix23 boot-support review candidate
 
 Version: `0.7.15-boot-auditfix23`. The existing auditfix19 PLG basename is retained so that Unraid updates the registered plugin instead of creating another entry.

@@ -53,3 +53,20 @@ for existed in [False,True]:
 with tempfile.TemporaryDirectory(prefix='rpboot-',dir=tmpdir) as td:
  root=Path(td);base=setup(root);(base/'ENABLE').touch();run(0,root,ok=False,extra={'SIM_ACTIVE':'1'});assert not (root/'usr/local/sbin/rp2040-fan-control').exists()
  print('PASS: untracked active daemon blocks installation')
+# Standard Linux /var/run alias is mapped inside the fake root, never followed to host /run.
+with tempfile.TemporaryDirectory(prefix='rpboot-',dir=tmpdir) as td:
+ root=Path(td);base=setup(root)
+ (root/'var').mkdir();(root/'run').mkdir();(root/'var/run').symlink_to('/run')
+ (base/'ENABLE').touch();runtime=root/'run/rp2040-fan-control';runtime.mkdir()
+ run(0,root,ok=False) # missing wrapper alone is insufficient if canonical IPC exists
+ runtime.rmdir();run(0,root)
+ assert (base/'ENABLE').is_file()
+ assert (root/'usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart').is_file()
+ print('PASS: standard /var/run alias permits fresh runtime restoration; existing canonical IPC blocks it')
+for target in ['/unexpected', '/run']:
+ with tempfile.TemporaryDirectory(prefix='rpboot-',dir=tmpdir) as td:
+  root=Path(td);base=setup(root);(root/'var').mkdir();(root/'run').mkdir();(root/'var/run').symlink_to(target)
+  if target=='/run': (root/'run/rp2040-fan-control').symlink_to('/unexpected')
+  run(0,root,ok=False)
+  assert not (root/'usr/local/sbin/rp2040-fan-control').exists()
+ print('PASS: rejects unexpected runtime symlink',target)
