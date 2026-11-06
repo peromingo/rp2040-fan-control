@@ -11,7 +11,7 @@ The repository is available at:
 
 The source tree has been uploaded to GitHub. The CI workflow and `.gitignore` are included in the working branch. The Unraid-N100 integration evidence for 2026-11-04 is recorded in `UNRAID-TEST-2026-11-04.md`.
 
-The auditfix21 candidate in `plugin/candidates/auditfix21/` is the exact self-contained plugin package installed and exercised on Unraid-N100 on 2026-11-04. It is kept as a test candidate, not a stable release. Its checksum file is retained beside it. This candidate contains the tested service controls, serial-port selector, thermal-source configuration, live status endpoint and responsive WebUI layout. The main source tree is a newer development architecture; do not treat this historical integration candidate as a reproducible build of the current source tree.
+The auditfix22 candidate in `plugin/candidates/auditfix22/` contains the auditfix21 integration plus a verified fix for the uninstaller's baseline-page/icon check. It is a test candidate, not a stable release. The auditfix21 package is retained as the exact earlier installation artifact. The main source tree is a newer development architecture; neither candidate is a reproducible build of that source tree.
 
 This document tracks publication readiness. A successful CI run validates the checks implemented in the workflow, but does not establish that the software is production-ready or that it works correctly on every Unraid installation.
 
