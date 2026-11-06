@@ -138,12 +138,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                         $pagePath = '/Settings/RP2040FanControl';
                     }
                     $modeReturnUrl = $pagePath . '?request_id=' . rawurlencode($requestId);
-                    if (!headers_sent()) {
-                        header('Location: ' . $modeReturnUrl, true, 303);
-                        exit;
-                    }
-                    // Unraid may already have emitted its page shell. Continue rendering
-                    // and navigate to GET from the rendered page instead of exiting blank.
+                    // Unraid owns the outer response. Always render the included page;
+                    // its local GET navigation below completes the form without exiting
+                    // midway through the surrounding renderer or relying on HTTP headers.
                     $notice = 'Solicitud enviada. Esperando confirmación del daemon.';
                 }
             } catch (Throwable $e) { $error = 'No se pudo enviar la solicitud al daemon.'; error_log('RP2040 Fan Control IPC: ' . $e->getMessage()); }
@@ -153,7 +150,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
 $status = rp2040_read_json($statusFile);
 $result = rp2040_read_json($resultFile);
-$requestIdFromQuery = $submittedRequestId !== '' ? $submittedRequestId : (string)($_GET['request_id'] ?? '');
+$requestIdFromQuery = $submittedRequestId;
+if ($requestIdFromQuery === '' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    $requestIdFromQuery = (string)($_GET['request_id'] ?? '');
+}
 if (!preg_match('/^[a-f0-9]{32}$/D', $requestIdFromQuery)) $requestIdFromQuery = '';
 if ($requestIdFromQuery !== '' && preg_match('/^[a-f0-9]{32}$/', $requestIdFromQuery)) {
     if (is_array($result) && ($result['request_id'] ?? '') === $requestIdFromQuery) {

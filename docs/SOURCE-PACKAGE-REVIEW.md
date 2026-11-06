@@ -39,4 +39,4 @@ The source-built candidate remains subject to CI and target validation before re
 
 ## Source RC2 WebUI completion fix
 
-Mode POST handling now preserves the rendered page if the enclosing Unraid shell has already sent headers. It uses a guarded HTTP redirect where possible and a rendered local GET navigation otherwise. The live JSON endpoint returns only the result matching the tracked request ID, allowing the confirmation message to update. Direct POST rejection remains in force. Regression tests emulate a previously emitted shell, pending-command conflicts, local return-route restrictions and result-ID isolation.
+Mode POST handling now preserves the rendered page if the enclosing Unraid shell has already sent headers. It always renders the included page and completes the form with a local GET navigation, leaving the outer response under Unraid control. The live JSON endpoint returns only the result matching the tracked request ID, allowing the confirmation message to update. Direct POST rejection remains in force. Regression tests emulate a previously emitted shell, pending-command conflicts, local return-route restrictions and result-ID isolation.

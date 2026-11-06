@@ -74,3 +74,20 @@ class WebUIPostRenderTests(unittest.TestCase):
         self.assertEqual(json.loads(self.php(code, request_id))['command_result'], result)
         self.assertIsNone(json.loads(self.php(code, 'b' * 32))['command_result'])
         self.assertFalse((self.ipc / 'command.json').exists())
+
+    def test_post_error_does_not_display_an_older_get_request_result(self):
+        request_id = 'a' * 32
+        (self.ipc / 'command-result.json').write_text(json.dumps({'request_id': request_id, 'ok': True, 'message': 'OLD_RESULT_SENTINEL', 'applied_mode': 'SILENT'}))
+        code = 'echo "UNRAID_SHELL"; $_SERVER["REQUEST_METHOD"]="POST"; $_SERVER["SCRIPT_FILENAME"]="/synthetic-router.php"; $_GET=["request_id"=>$argv[2]]; $_POST=["mode"=>"INVALID"]; include $argv[1];'
+        html = self.php(code, request_id)
+        self.assertIn('Modo solicitado no válido', html)
+        self.assertNotIn('OLD_RESULT_SENTINEL', html)
+        self.assertNotIn('Modo aceptado', html)
+        self.assertFalse((self.ipc / 'command.json').exists())
+
+    def test_no_preceding_shell_also_renders_included_page(self):
+        code = '$_SERVER["REQUEST_METHOD"]="POST"; $_SERVER["SCRIPT_FILENAME"]="/synthetic-router.php"; $_SERVER["REQUEST_URI"]="/Settings/RP2040FanControl"; $_POST=["mode"=>"SILENT"]; include $argv[1];'
+        html = self.php(code)
+        self.assertIn('<div class="rp2040-fan-control">', html)
+        self.assertIn('window.location.replace(', html)
+        self.assertTrue((self.ipc / 'command.json').exists())
