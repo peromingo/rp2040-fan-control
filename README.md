@@ -1,22 +1,22 @@
-# RP2040 SATA HAT fan control for Unraid
+# Control de ventiladores RP2040 SATA HAT para Unraid
 
-Development controller and WebUI for RP2040 fan control. The firmware does not return serial ACK: a successful command confirms daemon acceptance and a completed serial write, not measured fan RPM.
+Controlador y WebUI en desarrollo para regular ventiladores mediante un RP2040. El firmware no devuelve confirmaciones serie (ACK): un comando correcto confirma que el daemon ha aceptado la solicitud y completado la escritura por serie; no confirma las RPM físicas de los ventiladores.
 
-The source-built review candidate is **0.8.0-source-rc2**. Its runtime combines persistent JSON disk/CPU assignments, serial-port selection, live WebUI, source warnings and opt-in boot startup with protected instance locking and Python interpreter diagnostics. It is not a stable release; this consolidated runtime requires target validation.
+El candidato de revisión generado desde el código fuente es **0.8.0-source-rc2**. Combina asignaciones persistentes de discos y CPU en JSON, selección del puerto serie, una WebUI con datos en directo, avisos sobre las fuentes térmicas y arranque automático opcional, con protección contra instancias duplicadas y diagnóstico del intérprete Python. No es una versión estable; la validación de este conjunto en el sistema de destino sigue en curso.
 
-## Build the installable review PLG
+## Generar el PLG instalable para revisión
 
-With Python 3.11 or newer:
+Con Python 3.11 o posterior:
 
 ```sh
 python3 tools/build_integration_plg.py /tmp/rp2040-source-rc2
 ```
 
-The builder downloads the official pyserial 3.5 wheel if necessary and checks its pinned SHA-256 before packaging. For an offline build, supply `--wheel /path/to/pyserial-3.5-py2.py3-none-any.whl`. No pip installation is performed on Unraid.
+El generador descarga, si es necesario, el paquete wheel oficial de pyserial 3.5 y comprueba su SHA-256 fijado antes de empaquetarlo. Para generar el paquete sin conexión, utiliza `--wheel /path/to/pyserial-3.5-py2.py3-none-any.whl`. No se ejecuta ninguna instalación mediante pip en Unraid.
 
-Outputs include the self-contained `.plg`, its `.sha256`, `payload.tar.gz`, and inspectable installation/removal scripts. The payload is built directly from `src/unraid`, `plugin/src` and `plugin/scripts`. Transaction templates live in `plugin/templates`. The verifier compares every extracted file, permission and installer block against its source or the pinned dependency wheel. A `build-manifest.json` is included in the app payload.
+Los archivos generados incluyen el `.plg` autocontenido, su `.sha256`, `payload.tar.gz` y los scripts de instalación y desinstalación que se pueden inspeccionar. El contenido se genera directamente desde `src/unraid`, `plugin/src` y `plugin/scripts`. Las plantillas de las operaciones de instalación y reversión están en `plugin/templates`. El verificador compara cada archivo extraído, sus permisos y cada bloque del instalador con su código fuente o con el wheel de la dependencia fijada. El contenido de la aplicación incluye un `build-manifest.json`.
 
-The legacy `rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg` basename is deliberately retained for the existing integration-plugin upgrade path. The internal version identifies the candidate. Do not install additional copies under alternative basenames.
+Se conserva deliberadamente el nombre histórico `rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg` para mantener la vía de actualización del plugin de integración existente. La versión interna identifica el candidato. No instales copias adicionales con otros nombres de archivo.
 
 ```sh
 python3 tools/build_integration_plg.py /tmp/rp2040-source-rc2 \
@@ -24,9 +24,9 @@ python3 tools/build_integration_plg.py /tmp/rp2040-source-rc2 \
   --verify /tmp/rp2040-source-rc2/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
 ```
 
-## Development checks
+## Comprobaciones de desarrollo
 
-Install `requirements.txt` in a development environment. PHP CLI enables the PHP integration tests.
+Instala las dependencias de `requirements.txt` en un entorno de desarrollo. PHP CLI permite ejecutar las pruebas de integración de PHP.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/unraid \
@@ -35,30 +35,30 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/unraid \
 python3 tools/test_boot_candidate.py /tmp/rp2040-source-rc2
 ```
 
-Tests use temporary filesystems and fake service/serial operations. They do not start hardware control. CI runs Python 3.11/3.12, PHP syntax and protocol checks, source/publication audits, lifecycle simulations, source/payload verification and deterministic rebuild comparison.
+Las pruebas utilizan sistemas de archivos temporales y operaciones simuladas del servicio y del puerto serie. No ponen en marcha el control del hardware. La integración continua (CI) ejecuta pruebas con Python 3.11 y 3.12, comprobaciones de sintaxis y protocolo PHP, auditorías del código fuente y del contenido publicable, simulaciones del ciclo de instalación y servicio, verificación del contenido frente al código fuente y comparación de generaciones reproducibles.
 
-## Unraid lifecycle
+## Instalación, arranque y desinstalación en Unraid
 
-Manual installation requires the existing service stopped and ENABLE absent. Installation preserves configuration and logs and leaves the service disabled. The startup event starts only with ENABLE present and no pending recovery. On reboot the installer can restore missing RAM files while preserving ENABLE; enabled updates against an existing runtime are refused. The standard `/var/run -> /run` alias is supported.
+La instalación manual requiere que el servicio existente esté detenido y que ENABLE esté ausente. La instalación conserva la configuración y los logs, y deja el servicio deshabilitado. El evento de arranque solo inicia el daemon si ENABLE está presente y no hay una recuperación pendiente. Durante el reinicio, el instalador puede restaurar los archivos que faltan en RAM conservando ENABLE; se rechazan las actualizaciones con el servicio habilitado cuando ya existe una instalación en ejecución. Se admite el enlace estándar `/var/run -> /run`.
 
-Use the WebUI helper to stop the service before an update. Uninstall restores that candidate's verified baseline, removes ENABLE, and preserves persistent configuration/logs/backups. A failed recovery retains `recovery-pending` for inspection. First installation uses example placeholders and must be configured before starting.
+Utiliza el auxiliar de la WebUI para detener el servicio antes de actualizarlo. La desinstalación restaura la copia base verificada de ese candidato, elimina ENABLE y conserva la configuración persistente, los logs y las copias de seguridad. Si falla una recuperación, se conserva `recovery-pending` para poder inspeccionarla. La primera instalación utiliza una configuración de ejemplo con marcadores que deben sustituirse antes de arrancar el servicio.
 
-The main WebUI route processes mutating forms through Unraid. Direct POST requests to the PHP live endpoint are rejected; direct GET polling is read-only. PHP invokes a fixed-action privileged helper under the supplied sudoers policy.
+La ruta principal de la WebUI procesa los formularios que modifican el estado a través de Unraid. Se rechazan las solicitudes POST directas al endpoint PHP de datos en directo; las consultas GET directas son de solo lectura. PHP invoca un auxiliar privilegiado con acciones limitadas mediante las reglas sudoers suministradas.
 
-## Publication
+## Publicación
 
-Integration artifacts auditfix21–24 are retained as historical candidates. The source-built candidate supersedes their build process; its runtime changes still need target validation. Preview update checking (`pluginURL`) is prepared below; a stable release channel remains pending. No stable release is published by this build command.
+Los paquetes de integración auditfix21–24 se conservan como candidatos históricos. El candidato generado desde el código fuente sustituye su proceso de generación; la validación de sus cambios en el sistema de destino sigue en curso. La comprobación de actualizaciones del canal de pruebas (`pluginURL`) se describe más abajo; el canal estable sigue pendiente. Este comando de generación no publica ninguna versión estable.
 
-See `docs/SOURCE-PACKAGE-REVIEW.md`, `docs/GITHUB-PUBLICATION.md`, `CONTRIBUTING.md` and `SECURITY.md`. Source ownership/license/security review remains required for release approval. Firmware is included for reference; building/installing the Unraid package does not flash it.
+Consulta `docs/SOURCE-PACKAGE-REVIEW.md`, `docs/GITHUB-PUBLICATION.md`, `CONTRIBUTING.md` y `SECURITY.md`. La revisión de autoría, licencia y seguridad del código sigue siendo necesaria para aprobar una publicación. El firmware se incluye como referencia; generar o instalar el paquete de Unraid no lo graba en el RP2040.
 
-The older `plugin/rp2040-fan-control.plg.in`, `tools/render_unraid_plg.py`, and `plugin/scripts/install-from-payload.sh` are historical prototype/reference code, not the deployment path for this candidate.
+Los archivos antiguos `plugin/rp2040-fan-control.plg.in`, `tools/render_unraid_plg.py` y `plugin/scripts/install-from-payload.sh` son prototipos históricos o código de referencia; no son la vía de instalación de este candidato.
 
-## Preview update channel
+## Canal de actualizaciones preview
 
-The reviewed RC2 package is also available with update-check metadata in `plugin/channels/preview/`. This is the testing channel. Its self-referencing `pluginURL` is a persistent raw URL on `source-tree-review`; keep that branch available while installed preview definitions use it. A stable channel is not enabled yet.
+El paquete RC2 revisado también está disponible con los metadatos de comprobación de actualizaciones en `plugin/channels/preview/`. Este es el canal de pruebas. Su `pluginURL` apunta a la propia definición mediante una URL persistente de contenido sin procesar en `source-tree-review`; conserva esa rama mientras las definiciones preview instaladas utilicen esa dirección. Todavía no hay un canal estable habilitado.
 
-`tools/prepare_update_manifest.py` requires the exact reviewed source-package SHA-256 and adds `pluginURL` and normalizes the internal `name` to `rp2040-fan-control` in the opening PLUGIN tag. Verification rejects changes to runtime code, install/remove scripts, version, checksum or provenance. CI compares the committed preview definition against a fresh source build. The original source-rc2 artifact remains unchanged.
+`tools/prepare_update_manifest.py` exige el SHA-256 exacto del paquete fuente revisado, añade `pluginURL` y normaliza el atributo interno `name` a `rp2040-fan-control` en la etiqueta de apertura PLUGIN. La verificación rechaza cambios en el código ejecutable, los scripts de instalación y desinstalación, la versión, el checksum o el registro de procedencia. CI compara la definición preview guardada en el repositorio con un paquete recién generado desde el código fuente. El archivo original de source-rc2 se conserva sin cambios.
 
-Update checking is read-only with respect to the running daemon. Installing an offered update still requires stopping the service and clearing ENABLE using the helper, then explicitly starting it after installation. The installer intentionally refuses enabled/running updates.
+La comprobación de actualizaciones no modifica el daemon en ejecución. Para instalar una actualización ofrecida, sigue siendo necesario detener el servicio y retirar ENABLE mediante el auxiliar; después de instalarla, hay que arrancarlo explícitamente. El instalador rechaza deliberadamente las actualizaciones con el servicio habilitado o en ejecución.
 
-Draft release notes, reviewed asset names and the publication procedure are in `docs/releases/v0.8.0-source-rc2.md`. A pre-release channel is for reviewed test packages; it is not an automatic promotion to a stable release.
+El borrador de las notas de publicación, los nombres de los archivos revisados y el procedimiento de publicación están en `docs/releases/v0.8.0-source-rc2.md`. Un canal de versiones preliminares sirve para distribuir paquetes de pruebas revisados; no implica su promoción automática a una versión estable.
