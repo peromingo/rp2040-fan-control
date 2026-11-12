@@ -47,8 +47,18 @@ The main WebUI route processes mutating forms through Unraid. Direct POST reques
 
 ## Publication
 
-Integration artifacts auditfix21–24 are retained as historical candidates. The source-built candidate supersedes their build process; its runtime changes still need target validation. Automatic update checking (`pluginURL`) will be configured with a stable release channel. No stable release is published by this build command.
+Integration artifacts auditfix21–24 are retained as historical candidates. The source-built candidate supersedes their build process; its runtime changes still need target validation. Preview update checking (`pluginURL`) is prepared below; a stable release channel remains pending. No stable release is published by this build command.
 
 See `docs/SOURCE-PACKAGE-REVIEW.md`, `docs/GITHUB-PUBLICATION.md`, `CONTRIBUTING.md` and `SECURITY.md`. Source ownership/license/security review remains required for release approval. Firmware is included for reference; building/installing the Unraid package does not flash it.
 
 The older `plugin/rp2040-fan-control.plg.in`, `tools/render_unraid_plg.py`, and `plugin/scripts/install-from-payload.sh` are historical prototype/reference code, not the deployment path for this candidate.
+
+## Preview update channel
+
+The reviewed RC2 package is also available with update-check metadata in `plugin/channels/preview/`. This is the testing channel. Its self-referencing `pluginURL` is a persistent raw URL on `source-tree-review`; keep that branch available while installed preview definitions use it. A stable channel is not enabled yet.
+
+`tools/prepare_update_manifest.py` requires the exact reviewed source-package SHA-256 and adds only `pluginURL` to the opening PLUGIN tag. Verification rejects changes to runtime code, install/remove scripts, version, checksum or provenance. CI compares the committed preview definition against a fresh source build. The original source-rc2 artifact remains unchanged.
+
+Update checking is read-only with respect to the running daemon. Installing an offered update still requires stopping the service and clearing ENABLE using the helper, then explicitly starting it after installation. The installer intentionally refuses enabled/running updates.
+
+Draft release notes, reviewed asset names and the publication procedure are in `docs/releases/v0.8.0-source-rc2.md`. A pre-release channel is for reviewed test packages; it is not an automatic promotion to a stable release.

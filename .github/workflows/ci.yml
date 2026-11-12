@@ -49,6 +49,14 @@ jobs:
           (cd dist/ci-a && sha256sum -c rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256)
           python tools/audit_publication.py --payload dist/ci-a/payload.tar.gz
           python tools/test_boot_candidate.py dist/ci-a
+      - name: Verify preview update metadata
+        run: |
+          SOURCE_HASH=$(awk '{print $1}' plugin/candidates/source-rc2/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256)
+          python tools/prepare_update_manifest.py dist/ci-a/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg dist/preview --expected-sha256 "$SOURCE_HASH"
+          python tools/prepare_update_manifest.py dist/ci-a/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg dist/preview --expected-sha256 "$SOURCE_HASH" --verify
+          cmp dist/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
+          cmp dist/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256 plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256
+          cmp dist/preview/manifest.json plugin/channels/preview/manifest.json
       - name: Verify deterministic source build
         run: |
           python tools/build_integration_plg.py dist/ci-b --wheel /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
@@ -62,5 +70,8 @@ jobs:
             dist/ci-a/*.plg
             dist/ci-a/*.sha256
             dist/ci-a/payload.tar.gz
+            dist/preview/*.plg
+            dist/preview/*.sha256
+            dist/preview/manifest.json
           if-no-files-found: error
           retention-days: 14
