@@ -57,7 +57,7 @@ The older `plugin/rp2040-fan-control.plg.in`, `tools/render_unraid_plg.py`, and 
 
 The reviewed RC2 package is also available with update-check metadata in `plugin/channels/preview/`. This is the testing channel. Its self-referencing `pluginURL` is a persistent raw URL on `source-tree-review`; keep that branch available while installed preview definitions use it. A stable channel is not enabled yet.
 
-`tools/prepare_update_manifest.py` requires the exact reviewed source-package SHA-256 and adds only `pluginURL` to the opening PLUGIN tag. Verification rejects changes to runtime code, install/remove scripts, version, checksum or provenance. CI compares the committed preview definition against a fresh source build. The original source-rc2 artifact remains unchanged.
+`tools/prepare_update_manifest.py` requires the exact reviewed source-package SHA-256 and adds `pluginURL` and normalizes the internal `name` to `rp2040-fan-control` in the opening PLUGIN tag. Verification rejects changes to runtime code, install/remove scripts, version, checksum or provenance. CI compares the committed preview definition against a fresh source build. The original source-rc2 artifact remains unchanged.
 
 Update checking is read-only with respect to the running daemon. Installing an offered update still requires stopping the service and clearing ENABLE using the helper, then explicitly starting it after installation. The installer intentionally refuses enabled/running updates.
 

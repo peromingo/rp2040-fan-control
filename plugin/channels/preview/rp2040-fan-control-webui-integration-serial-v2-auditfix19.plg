@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<PLUGIN name="RP2040 SATA HAT Fan Control" author="peromingo" version="0.8.0-source-rc2" launch="Settings/RP2040FanControl" pluginURL="https://raw.githubusercontent.com/peromingo/rp2040-fan-control/source-tree-review/plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg">
+<PLUGIN name="rp2040-fan-control" author="peromingo" version="0.8.0-source-rc2" launch="Settings/RP2040FanControl" pluginURL="https://raw.githubusercontent.com/peromingo/rp2040-fan-control/source-tree-review/plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg">
 <CHANGES>
 Source-built review candidate: JSON and serial configuration, live WebUI, protected instance locking, persistent Python selection and opt-in startup restoration. Firmware does not return serial ACK.
 </CHANGES>

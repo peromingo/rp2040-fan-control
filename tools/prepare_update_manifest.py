@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
+PLUGIN_ID = 'rp2040-fan-control'
+LEGACY_NAME = 'RP2040 SATA HAT Fan Control'
 PLG_NAME = 'rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg'
 PREVIEW_URL = ('https://raw.githubusercontent.com/peromingo/rp2040-fan-control/'
                'source-tree-review/plugin/channels/preview/' + PLG_NAME)
@@ -27,6 +29,8 @@ def checked_source(path, expected_sha256):
     root = ET.fromstring(data)
     if root.tag != 'PLUGIN' or not root.findall('FILE'):
         raise ValueError('Source is not an executable Unraid plugin definition')
+    if root.attrib.get('name') not in (LEGACY_NAME, PLUGIN_ID):
+        raise ValueError('Unexpected plugin identity')
     if 'pluginURL' in root.attrib:
         raise ValueError('Source already has pluginURL; use the reviewed source-built artifact')
     if not re.fullmatch(r'[A-Za-z0-9._+-]+', root.attrib.get('version', '')):
@@ -39,20 +43,29 @@ def metadata_bytes(source, expected_sha256):
     match = re.search(br'<PLUGIN\b[^>]*>', data)
     if not match or match[0].endswith(b'/>'):
         raise ValueError('Cannot locate plugin opening tag')
-    result = data[:match.end()-1] + ADDITION + data[match.end()-1:]
-    # The only allowed difference is the one attribute on the opening tag.
-    if result.replace(ADDITION, b'', 1) != data:
+    original_tag = match[0]
+    old_name = (' name="' + root.attrib['name'] + '"').encode('ascii')
+    new_name = (' name="' + PLUGIN_ID + '"').encode('ascii')
+    if original_tag.count(old_name) != 1:
+        raise ValueError('Cannot safely normalize the plugin name attribute')
+    updated_tag = original_tag.replace(old_name, new_name, 1)
+    updated_tag = updated_tag[:-1] + ADDITION + b'>'
+    result = data[:match.start()] + updated_tag + data[match.end():]
+    # Reversing only the two opening-tag metadata changes must restore all bytes.
+    restored_tag = updated_tag.replace(ADDITION, b'', 1).replace(new_name, old_name, 1)
+    if data[:match.start()] + restored_tag + result[match.start()+len(updated_tag):] != data:
         raise ValueError('Plugin code changed while adding metadata')
     parsed = ET.fromstring(result)
     attrs = dict(parsed.attrib)
-    if attrs.pop('pluginURL', None) != PREVIEW_URL or attrs != root.attrib:
+    expected_attrs = dict(root.attrib, name=PLUGIN_ID)
+    if attrs.pop('pluginURL', None) != PREVIEW_URL or attrs != expected_attrs:
         raise ValueError('Unexpected plugin attributes')
     return result, root.attrib['version']
 
 
 def record_for(source_hash, data, version):
     return {'schema_version': 1, 'channel': 'preview', 'version': version,
-            'plugin_url': PREVIEW_URL, 'filename': PLG_NAME,
+            'plugin_url': PREVIEW_URL, 'filename': PLG_NAME, 'plugin_name': PLUGIN_ID,
             'source_package_sha256': source_hash, 'manifest_sha256': sha256(data)}
 
 
@@ -75,7 +88,7 @@ def verify(source, expected_sha256, output):
     output = Path(output)
     actual = (output / PLG_NAME).read_bytes()
     if actual != expected:
-        raise ValueError('Preview definition differs from the reviewed plugin beyond pluginURL')
+        raise ValueError('Preview definition differs from the reviewed plugin beyond allowed opening-tag metadata')
     if (output / (PLG_NAME + '.sha256')).read_text() != sha256(actual) + '  ' + PLG_NAME + '\n':
         raise ValueError('Preview checksum sidecar mismatch')
     record = json.loads((output / 'manifest.json').read_text())
