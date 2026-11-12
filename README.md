@@ -2,7 +2,21 @@
 
 Controlador y WebUI en desarrollo para regular ventiladores mediante un RP2040. El firmware no devuelve confirmaciones serie (ACK): un comando correcto confirma que el daemon ha aceptado la solicitud y completado la escritura por serie; no confirma las RPM físicas de los ventiladores.
 
-El candidato de revisión generado desde el código fuente es **0.8.0-source-rc2**. Combina asignaciones persistentes de discos y CPU en JSON, selección del puerto serie, una WebUI con datos en directo, avisos sobre las fuentes térmicas y arranque automático opcional, con protección contra instancias duplicadas y diagnóstico del intérprete Python. No es una versión estable; la validación de este conjunto en el sistema de destino sigue en curso.
+El candidato de revisión generado desde el código fuente es **0.8.0-source-rc2**. Combina asignaciones persistentes de discos y CPU en JSON, selección del puerto serie, una WebUI con datos en directo, avisos sobre las fuentes térmicas y arranque automático opcional, con protección contra instancias duplicadas y diagnóstico del intérprete Python. No es una versión estable. El PLG y sus pruebas completadas están documentados en el resumen de validación; siguen pendientes los ensayos físicos de desconexión y pérdida de fuentes térmicas.
+
+## Estado de pruebas y tareas
+
+Está publicada la [prerelease v0.8.0-source-rc2](https://github.com/peromingo/rp2040-fan-control/releases/tag/v0.8.0-source-rc2). La [validación actual](docs/VALIDATION-STATUS.md) distingue resultados automáticos, comprobaciones manuales y límites.
+
+| Prueba del PLG | Estado |
+| --- | --- |
+| Instalación limpia | Completada |
+| Actualización RC1 → RC2 desde Plugins, conservando configuración | Completada |
+| Reinicio real sin ENABLE | Completado |
+| Desconexión/reconexión del RP2040 real | Aplazada |
+| Pérdida de fuentes térmicas y fallback físico | Aplazada |
+
+La revisión final y el canal estable siguen pendientes. Consulta la [lista de tareas](docs/PUBLICATION-CHECKLIST.md) y el [procedimiento de publicación](docs/GITHUB-PUBLICATION.md).
 
 ## Placas utilizadas
 
@@ -109,7 +123,7 @@ La ruta principal de la WebUI procesa los formularios que modifican el estado a 
 
 ## Publicación
 
-Los paquetes de integración auditfix21–24 se conservan como candidatos históricos. El candidato generado desde el código fuente sustituye su proceso de generación; la validación de sus cambios en el sistema de destino sigue en curso. La comprobación de actualizaciones del canal de pruebas (`pluginURL`) se describe más abajo; el canal estable sigue pendiente. Este comando de generación no publica ninguna versión estable.
+Los paquetes de integración auditfix21–24 se conservan como candidatos históricos. El candidato generado desde el código fuente sustituye su proceso de generación. El alcance de las pruebas completadas y los dos ensayos de hardware aplazados se mantiene en [VALIDATION-STATUS.md](docs/VALIDATION-STATUS.md). La comprobación de actualizaciones del canal de pruebas (`pluginURL`) se describe más abajo; el canal estable sigue pendiente. Este comando de generación no publica ninguna versión estable.
 
 Consulta `docs/SOURCE-PACKAGE-REVIEW.md`, `docs/GITHUB-PUBLICATION.md`, `CONTRIBUTING.md` y `SECURITY.md`. La revisión de autoría, licencia y seguridad del código sigue siendo necesaria para aprobar una publicación. El firmware se incluye como referencia; generar o instalar el paquete de Unraid no lo graba en el RP2040.
 
@@ -123,4 +137,4 @@ El paquete RC2 revisado también está disponible con los metadatos de comprobac
 
 La comprobación de actualizaciones no modifica el daemon en ejecución. Para instalar una actualización ofrecida, sigue siendo necesario detener el servicio y retirar ENABLE mediante el auxiliar; después de instalarla, hay que arrancarlo explícitamente. El instalador rechaza deliberadamente las actualizaciones con el servicio habilitado o en ejecución.
 
-El borrador de las notas de publicación, los nombres de los archivos revisados y el procedimiento de publicación están en `docs/releases/v0.8.0-source-rc2.md`. Un canal de versiones preliminares sirve para distribuir paquetes de pruebas revisados; no implica su promoción automática a una versión estable.
+Las notas de la prerelease publicada, la identidad de sus archivos y los límites de validación están en [docs/releases/v0.8.0-source-rc2.md](docs/releases/v0.8.0-source-rc2.md). Un canal de versiones preliminares sirve para distribuir paquetes de pruebas revisados; no implica su promoción automática a una versión estable.

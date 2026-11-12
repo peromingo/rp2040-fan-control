@@ -1,6 +1,8 @@
-# Unraid integration test: 2026-11-04
+# Registro histórico de integración: 2026-11-04
 
-This records the auditfix21 candidate tested on the Unraid-N100 host. It is
+Este informe corresponde exclusivamente al candidato auditfix21. El estado actual de RC2, sus pruebas cerradas y los pendientes reales se encuentran en [VALIDATION-STATUS.md](VALIDATION-STATUS.md). No se atribuyen retrospectivamente a auditfix21 las pruebas de RC2.
+
+This records the auditfix21 candidate tested in an Unraid test environment. It is
 evidence for a development integration candidate, not a general production
 readiness claim.
 
@@ -33,9 +35,9 @@ readiness claim.
 - The updated responsive layout grouped service, serial, thermal configuration,
   status, fan metrics, and mode controls into panels/cards.
 
-## Still pending before a stable release
+## Pendientes registrados para aquel candidato
 
-- Uninstall and reinstall of the candidate as a complete lifecycle test.
+- Uninstall and reinstall of this exact historical candidate as a complete lifecycle test.
 - Reboot/startup and rollback testing after this exact candidate.
 - Source ownership, security, privacy, compatibility and release-artifact review
   listed in `GITHUB-PUBLICATION.md`.

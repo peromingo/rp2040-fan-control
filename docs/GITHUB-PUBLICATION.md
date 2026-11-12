@@ -1,154 +1,70 @@
-# GitHub Publication and Release Checklist
+# Publicación y revisión en GitHub
 
-## Current repository status
+Actualizado: 2026-11-12.
 
-The repository is available at:
+## Estado actual
 
-- Repository: `peromingo/rp2040-fan-control`
-- Working branch: `source-tree-review`
-- Default branch: `main`
-- License: MIT, subject to confirmation that all included source code and firmware can legally be published.
+- Repositorio: peromingo/rp2040-fan-control.
+- Rama de trabajo y canal preview: source-tree-review; rama predeterminada: main.
+- [Prerelease v0.8.0-source-rc2](https://github.com/peromingo/rp2040-fan-control/releases/tag/v0.8.0-source-rc2) publicada con PLG y checksum descargados y verificados.
+- [PR de revisión #1](https://github.com/peromingo/rp2040-fan-control/pull/1) abierta en borrador en la revisión de este documento; no se ha fusionado main.
+- Código, README y documentación posteriores pueden avanzar sin cambiar el tag ni los adjuntos ya publicados.
 
-The source tree has been uploaded to GitHub. The CI workflow and `.gitignore` are included in the working branch. The Unraid-N100 integration evidence for 2026-11-04 is recorded in `UNRAID-TEST-2026-11-04.md`.
+La evidencia vigente está en [VALIDATION-STATUS.md](VALIDATION-STATUS.md). El informe de noviembre sobre auditfix21 es histórico y no define los pendientes de RC2.
 
-The auditfix22 candidate in `plugin/candidates/auditfix22/` contains the auditfix21 integration plus a verified fix for the uninstaller's baseline-page/icon check. It is a test candidate, not a stable release. The auditfix21 package is retained as the exact earlier installation artifact. The main source tree is a newer development architecture; neither candidate is a reproducible build of that source tree.
+## Generación y verificación
 
-The preferred build now uses `tools/build_integration_plg.py` to generate the source-built review candidate 0.8.0-source-rc2. See `README.md` and `SOURCE-PACKAGE-REVIEW.md` for the current source/payload verification workflow. Historical artifact notes below do not establish target validation of this new runtime.
+La vía actual es tools/build_integration_plg.py, no los prototipos históricos de renderizado. El generador utiliza las fuentes, las plantillas transaccionales y pyserial fijado por hash. El README contiene los comandos y la opción de wheel sin conexión.
 
-This document tracks publication readiness. A successful CI run validates the checks implemented in the workflow, but does not establish that the software is production-ready or that it works correctly on every Unraid installation.
+La variante distribuida se prepara con tools/prepare_update_manifest.py: añade pluginURL y normaliza el nombre interno. Su verificación exige el hash del paquete fuente y rechaza cambios fuera de esos metadatos. Consulta [SOURCE-PACKAGE-REVIEW.md](SOURCE-PACKAGE-REVIEW.md).
 
-Do not merge the working branch into `main` or publish a stable release until the applicable reviews and release blockers below have been addressed.
+CI comprueba Python 3.11/3.12, PHP/shell, contratos y simulaciones, auditoría estructural, correspondencia del payload y generaciones reproducibles. Las ejecuciones de referencia están enlazadas en el resumen de validación. Para aprobar cambios nuevos, comprueba todos los trabajos del commit correspondiente, incluidos los omitidos o cancelados.
 
-## 1. Source and security review
+## Pruebas del plugin cerradas
 
-- [ ] Review the complete branch diff before merging.
-- [ ] Confirm ownership and publication rights for all source files, recovered modules and firmware readback material.
-- [ ] Verify that no real disk serial numbers, host-specific configuration, production logs, credentials or other private artifacts are included.
-- [ ] Confirm that `site_config_local.py`, `site_config.py`, `.env`, logs, Python caches and generated `dist/` files are excluded from source control as appropriate.
-- [ ] Review `.gitignore` and `tools/audit_publication.py`; neither replaces a manual security review or a dedicated secret scan.
-- [ ] Confirm that the example configuration contains only safe placeholder values.
-- [ ] Review the README, license, contribution guidance and security policy for consistency with the actual project.
+- Instalación limpia del RC2 publicado con configuración inicial y servicio deshabilitado.
+- Desinstalación y reinstalación del RC2 fuente, con los mismos scripts ejecutables que la variante publicada.
+- Conservación de configuración/logs y ausencia de recuperación pendiente.
+- Arranque con ENABLE y reinicio real sin ENABLE.
+- Actualización real RC1 → RC2 desde Plugins, conservando exactamente la configuración.
+- Flujo WebUI/IPC, modos, puerto serie y comunicación con el RP2040 en el montaje probado.
+- Comprobación visual de actualizaciones y verificación de los adjuntos publicados.
 
-## 2. Continuous integration
+Estos resultados no certifican una instalación nueva del sistema operativo ni todas las versiones de Unraid. Python y smartctl siguen siendo requisitos externos; pyserial va incluido.
 
-The workflow is located at `.github/workflows/ci.yml`.
+## Revisiones que siguen pendientes
 
-It is configured to run on pushes, pull requests and manual dispatch. Its checks include:
+- [ ] Revisar el diff completo contra main y la lista de archivos.
+- [ ] Confirmar procedencia, autoría y derechos de publicación de fuentes, módulos recuperados y firmware.
+- [ ] Revisar manualmente seguridad y privacidad; la auditoría estructural no sustituye una revisión de secretos o de contenido.
+- [ ] Revisar compatibilidad y dependencias para las plataformas que se vayan a anunciar.
+- [ ] Completar desconexión/reconexión del RP2040 real y pérdida de fuentes térmicas, con observación del comportamiento físico.
+- [ ] Resolver hallazgos, revisar la PR y decidir su integración.
+- [ ] Preparar y verificar un canal estable y sus notas de publicación.
 
-- Python syntax compilation on Python 3.11 and 3.12.
-- Unit and integration-contract tests.
-- Publication source-tree audit.
-- PHP syntax validation.
-- Shell syntax validation.
-- Payload generation and SHA-256 checksum verification.
-- Audit of the generated payload.
-- Deterministic payload comparison.
+Las exclusiones de configuración local, logs, cachés, .env y dist/ están implementadas. Su existencia y los resultados automáticos se consideran comprobados; la revisión manual final de todo el contenido sigue pendiente. La licencia MIT está incluida, pero no sustituye la confirmación de derechos de cada componente.
 
-Before merging:
+## Procedimiento para futuras publicaciones
 
-- [ ] Confirm the latest relevant GitHub Actions run has completed successfully.
-- [ ] Confirm that all matrix jobs have passed, not merely that no red status is visible.
-- [ ] Investigate any skipped, cancelled or missing jobs.
-- [ ] Review the test output and verify that failures have not been hidden or bypassed.
+1. Identificar el commit revisado y ejecutar su CI completa.
+2. Generar el PLG desde sus fuentes; verificar payload, scripts y dependencia fijada.
+3. Preparar los metadatos del canal elegido y comprobar su URL antes de distribuir el PLG.
+4. Repetir las pruebas afectadas por cambios de comportamiento; actualizar el resumen de validación sin incluir datos privados.
+5. Crear el tag en el commit revisado y adjuntar únicamente el PLG y su checksum correspondientes.
+6. Usar la marca prerelease mientras no se haya aprobado la promoción a estable.
+7. Descargar los adjuntos publicados y verificar hash, versión, nombre interno y URL.
 
-CI passing is necessary but does not replace hardware testing or isolated Unraid integration testing.
+No reutilices un nombre de versión para cambiar un ejecutable ya publicado. Las correcciones de documentación en la rama no deben mover el tag de RC2.
 
-## 3. Local validation
+## Canal de actualizaciones
 
-Run the following commands from the repository root:
+RC2 consulta plugin/channels/preview/ mediante una URL persistente en source-tree-review. Esa rama debe conservarse mientras haya instalaciones que la utilicen. main no debe convertirse implícitamente en el canal estable ni borrarse la rama preview al fusionar una PR.
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python tools/audit_publication.py .
-PYTHONPATH=src/unraid python -m unittest discover -s tests -v
-PYTHONPYCACHEPREFIX=/tmp/rp2040-pycache python -m compileall -q src tests tools
-php -l plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php
-sh -n plugin/scripts/rp2040-fan-control plugin/scripts/install-from-payload.sh tools/build_unraid_payload.sh
-```
+Comprobar actualizaciones no inicia ni reinstala el daemon. Instalar una actualización exige detener el servicio y retirar ENABLE mediante el auxiliar. La instalación conserva los ajustes y requiere un arranque explícito posterior.
 
-To build and verify the current source-built PLG (see README for offline-wheel options):
+## Referencias
 
-```sh
-python3 tools/build_integration_plg.py /tmp/rp2040-source-rc2
-(
-  cd /tmp/rp2040-source-rc2
-  sha256sum -c rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256
-)
-python3 tools/audit_publication.py --payload /tmp/rp2040-source-rc2/payload.tar.gz
-python3 tools/test_boot_candidate.py /tmp/rp2040-source-rc2
-```
-
-The internal version comes from `src/unraid/fan_control/version.py`. The builder checks the pinned dependency wheel and verifies source/payload correspondence. Keep generated output outside the source tree when running its publication audit. This is a review installer; stable-release approval remains pending.
-
-## 4. Unraid integration and operational safety
-
-The following items require validation on an isolated Unraid test system before a stable release:
-
-- [ ] Confirm the actual PHP/emhttp execution identity and permissions.
-- [ ] Validate inter-process communication and command/status file access.
-- [ ] Verify persistent configuration creation, validation and migration.
-- [ ] Verify daemon start, stop, restart and failure recovery.
-- [ ] Verify service startup and shutdown behaviour across reboot.
-- [ ] Confirm that upgrades preserve user configuration and do not overwrite local settings.
-- [ ] Confirm that uninstall does not remove user data or unrelated system files.
-- [ ] Test fan-control behaviour, telemetry, error handling and safe fallback behaviour.
-- [ ] Test supported hardware and document known limitations.
-- [ ] Verify installation, upgrade, rollback and uninstall in an isolated Unraid VM or equivalent test environment.
-
-Do not test unverified installation or service changes against a production server or live storage array.
-
-## 5. Plugin and release artifact
-
-- [ ] Implement and review the actual `.plg` installer.
-- [ ] Ensure that the installer verifies the checksum of downloaded release artifacts.
-- [ ] Use a real, versioned GitHub Release asset URL; do not publish placeholder URLs.
-- [ ] Verify dependency handling and installation paths.
-- [ ] Test install, upgrade, stop, uninstall and reboot.
-- [ ] Verify that user configuration and logs are preserved where required.
-- [ ] Document the supported Unraid versions and recovery procedure.
-- [ ] Attach only reviewed, reproducible release artifacts to the GitHub Release.
-
-Do not label a generated payload as a stable release or advertise an installable `.plg` until the complete lifecycle has been tested.
-
-## 6. Branch and merge procedure
-
-Keep development changes on `source-tree-review` until review is complete.
-
-Before creating or approving a pull request:
-
-1. Inspect the branch diff against `main`.
-2. Run `git diff --check`.
-3. Review the staged and committed file lists for private or generated artifacts.
-4. Confirm that the latest CI checks passed.
-5. Resolve documentation discrepancies and security-review findings.
-6. Record any remaining limitations explicitly in the pull request.
-
-Do not force-push or merge changes without reviewing the impact on the target branch.
-
-## 7. Release readiness
-
-A stable release is blocked until the following are complete:
-
-- [ ] Source ownership and publication rights confirmed.
-- [ ] Security and privacy review completed.
-- [ ] CI checks pass on the reviewed commit.
-- [ ] Unraid permissions and IPC model validated.
-- [ ] Persistent configuration and service lifecycle verified.
-- [ ] Actual `.plg` installer implemented and reviewed.
-- [ ] Installation, upgrade, rollback, uninstall and reboot tested.
-- [ ] No private configuration, production logs or hardware identifiers exposed.
-- [ ] Release payload and checksums verified.
-- [ ] README and release notes accurately describe tested functionality and limitations.
-
-Once these requirements are satisfied, the maintainer can approve the merge and prepare a versioned release.
-
-## 8. Known limitations
-
-A successful source audit or CI run does not prove:
-
-- Compatibility with every Unraid release.
-- Correct permissions under the target emhttp/PHP execution environment.
-- Safe operation with every RP2040 firmware version or SATA HAT revision.
-- Correct behaviour under hardware failure or communication loss.
-- Completion of the real installation and uninstall lifecycle.
-
-These claims must be supported by testing and documented evidence before they are presented as verified features.
+- [Lista de tareas](PUBLICATION-CHECKLIST.md).
+- [Estado de validación y límites](VALIDATION-STATUS.md).
+- [Diseño del instalador actual](INSTALLER-DESIGN.md).
+- [Notas de RC2](releases/v0.8.0-source-rc2.md).

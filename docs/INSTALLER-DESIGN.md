@@ -1,53 +1,55 @@
-# Unraid installer design — pre-release
+# Diseño del instalador de Unraid
 
-## Current status
+Actualizado: 2026-11-12. El PLG **0.8.0-source-rc2** está publicado como prerelease y su ciclo de instalación, actualización, desinstalación y arranque tiene el alcance descrito en [VALIDATION-STATUS.md](VALIDATION-STATUS.md).
 
-The project does not yet have a release-ready `.plg`. `tools/build_unraid_payload.sh` creates a reproducible **payload preview archive** for code review only. It is deliberately not an `installpkg` package and must not be installed directly on Unraid.
+## Implementación actual
 
-## Planned file placement
+tools/build_integration_plg.py genera el instalador autocontenido a partir de src/unraid, plugin/src, plugin/scripts y las plantillas de plugin/templates. El payload incluye pyserial 3.5 fijado por SHA-256 y un manifiesto de construcción. El verificador compara archivos, permisos y bloques ejecutables con sus fuentes.
 
-- UI page: `/usr/local/emhttp/plugins/rp2040-fan-control/`
-- Service wrapper: `/usr/local/sbin/rp2040-fan-control`
-- Persistent application copy and local hardware configuration: `/boot/config/plugins/rp2040-fan-control/app/`
-- Runtime IPC: `/var/run/rp2040-fan-control/` (ephemeral; recreated after boot)
-- Persistent logs: `/boot/config/plugins/rp2040-fan-control/logs/`
+tools/prepare_update_manifest.py prepara la variante preview publicada, modificando solo nombre interno y pluginURL. La versión y los bloques ejecutables se conservan. Los prototipos plugin/rp2040-fan-control.plg.in, tools/render_unraid_plg.py y tools/build_unraid_payload.sh se mantienen como referencia histórica; no son la vía de generación de RC2.
 
-The payload stages application source under `/usr/local/share/rp2040-fan-control/app/`. A future `.plg` must copy that source into the persistent application directory on install/update, without overwriting `site_config_local.py` once it exists.
+## Rutas
 
-## Required `.plg` behavior before release
+| Elemento | Ruta |
+| --- | --- |
+| WebUI y evento startup | `/usr/local/emhttp/plugins/rp2040-fan-control/` |
+| Wrapper de servicio | `/usr/local/sbin/rp2040-fan-control` |
+| Auxiliar de acciones limitadas | `/usr/local/sbin/rp2040-fan-control-webui` |
+| Política sudoers | `/etc/sudoers.d/rp2040-fan-control-webui` |
+| Aplicación persistente y dependencia incluida | `/boot/config/plugins/rp2040-fan-control/app/` |
+| Configuración y selección serie | `config.json`, `serial_port.conf` y `python-path` en la carpeta persistente del plugin |
+| Logs y copias | `logs/` y `backup/` en esa carpeta |
+| Estado IPC temporal | `/var/run/rp2040-fan-control/` |
 
-1. Verify archive checksum before extracting or installing.
-2. Stop only this plugin's daemon before update/uninstall; validate PID identity.
-3. Copy new application files while preserving local config and logs.
-4. Create example local config only if no local config exists; keep startup disabled until explicit opt-in and completed validation.
-5. Never change disk assignments, array state, firmware, or `/boot/config/go`.
-6. On uninstall, remove only plugin-owned transient files and service registration; preserve persistent configuration and logs unless the user explicitly requests their removal.
-7. Fail closed on unknown PHP/emhttp permissions. No world-writable IPC directory.
-8. Test install, upgrade, stop, uninstall and reboot behavior in an isolated Unraid VM before release.
+El enlace estándar /var/run hacia /run se reconoce y valida. La numeración del puerto serie y los ajustes de cada instalación no forman parte del paquete público.
 
-## Release blocker
+## Contrato de instalación y actualización
 
-A genuine distribution URL/repository release is not known yet. Do not substitute a guessed GitHub URL. Until the project repository and release URL are provided, a `.plg` cannot fetch a verifiable payload, so no installable plugin is generated.
+- Verificar el payload y las rutas antes de instalar; rechazar componentes simbólicos no admitidos.
+- Capturar y comprobar la copia base; conservar un diario recovery-pending durante las operaciones que requieren recuperación.
+- Preservar configuración local/JSON, selección serie y logs existentes; crear la configuración de ejemplo solo si falta.
+- No arrancar durante una instalación manual. El servicio debe estar detenido y ENABLE ausente para actualizar una instalación existente.
+- En el arranque de Unraid, permitir restaurar archivos ausentes de RAM conservando ENABLE; el evento startup decide si inicia.
+- No grabar firmware, modificar /boot/config/go ni cambiar el estado del array.
 
-## Pre-release installer implementation
+## Desinstalación y recuperación
 
-- `plugin/rp2040-fan-control.plg.in` is a template, not an installable plugin.
-- `tools/render_unraid_plg.py` renders a `.plg` only when supplied with a SemVer-like version, real HTTPS URLs for the plugin/payload/support page, and a 64-character payload SHA-256. It validates XML and rejects unresolved placeholders.
-- `tools/build_unraid_payload.sh` now includes `usr/local/share/rp2040-fan-control/install.sh`. The helper stages the application, preserves an existing `site_config_local.py` and logs, creates an example-based local config only on first install, and does not create `ENABLE`.
-- The `.plg` uses a versioned payload cache, verifies SHA-256 before extraction, rejects unsafe archive paths, and has a conservative remove hook. Removal keeps persistent config and logs.
+La desinstalación valida la copia base antes de parar el daemon, retira ENABLE y restaura los destinos anteriores o elimina los que el candidato había creado. Comprueba los destinos y sudoers antes de retirar el diario de recuperación. Conserva configuración, logs y copias.
 
-This remains pre-release. The rendered `.plg` must not be produced with guessed URLs and must not be installed on the production host. The service wrapper and installer have isolated temporary-filesystem integration tests plus static/syntax and unit-test coverage (53 tests at the latest local run); they have not been executed against a real Unraid filesystem or plugin manager. PHP/emhttp write permissions for the IPC directory remain unresolved and are intentionally not loosened.
+Si hay recuperación pendiente, no debe borrarse el diario para forzar otra instalación. La recuperación depende de su origen y de la copia base verificada. Antes de intervenir, conserva una copia y revisa el diagnóstico del instalador de ese candidato; no ejecutes scripts de una versión distinta sobre un diario antiguo.
 
+La limpieza manual del candidato antiguo realizada para preparar una instalación limpia es una operación de prueba separada, no el procedimiento normal de desinstalación de RC2.
 
-## Runtime dependencies and IPC permissions
+## Dependencias y permisos
 
-The service wrapper currently requires an executable `python3`, importable `pyserial`, and `smartctl`. The installer does not install Python or run pip on Unraid. The build process bundles the pinned `pyserial` dependency under the persistent app's `vendor/` directory; the wrapper prepends that path for dependency checks and daemon execution. Python itself and `smartctl` remain external prerequisites and must be validated for the selected Unraid version before release. Existing IPC directories are no longer chmodded automatically: a newly created directory receives mode 0750, while an existing directory must be root-owned and not world-writable or the wrapper refuses to start. This still does not prove that PHP/emhttp can publish commands; that must be tested on the target Unraid release.
+Python 3, smartctl y timeout deben estar disponibles en el sistema. El plugin incluye pyserial bajo app/vendor y no instala Python ni ejecuta pip sobre el sistema Unraid. Se han detectado correctamente las dependencias en el entorno de prueba; no se presupone su presencia en todos los equipos.
 
+El wrapper ofrece check-deps, que informa del intérprete, la importación de pyserial y smartctl sin abrir el puerto del RP2040. RP2040_PYTHON permite elegir el intérprete de una invocación; python-path guarda una ruta absoluta y se lee como datos, no como código shell.
 
-## Dependency preflight (development)
+El directorio IPC nuevo usa modo 0750. Uno existente debe pertenecer a root y no permitir escritura de grupo/global. PHP utiliza un auxiliar con acciones limitadas y sudoers; no se concede escritura global para resolver el acceso.
 
-The service wrapper exposes `check-deps`, which only reports the selected Python interpreter, its `pyserial` import, and whether `smartctl` is on `PATH`; it does not install packages or access the RP2040 serial device. The Python interpreter can be selected by setting `RP2040_PYTHON` for a manual invocation or by placing its absolute executable path on the first line of `/boot/config/plugins/rp2040-fan-control/python-path`. The persistent file is read as data, never sourced as shell code.
+## Pruebas y límites
 
-Do not assume Python 3 is present in every Unraid installation, and do not install arbitrary Slackware packages or run `pip` against the system interpreter from this plugin. One current option listed in Community Applications is the third-party **Python 3 for UNRAID** plugin, which advertises Python, pip and uv for Unraid 6/7: https://ca.unraid.net/apps/python-3-for-unraid-1yap4lr1a085yr. Its presence, interpreter path, persistence and `pyserial` availability must be checked on the target system. This project does not install or update that dependency automatically.
+Las pruebas temporales de instalación/recuperación/arranque y la CI se complementan con los ensayos manuales registrados. Instalación limpia, actualización desde Plugins y reinicio sin ENABLE están cerrados. La desinstalación/reinstalación se comprobó sobre RC2 fuente, con scripts idénticos a los de la variante publicada.
 
-Before any future release, run `/usr/local/sbin/rp2040-fan-control check-deps` on an isolated Unraid test host after configuring the selected interpreter. This command is diagnostic only; it is not evidence that PHP/emhttp permissions or serial communication work.
+Quedan aplazadas las pruebas físicas de desconexión/reconexión del RP2040 y pérdida de fuentes térmicas. Las revisiones finales y el canal estable están en [PUBLICATION-CHECKLIST.md](PUBLICATION-CHECKLIST.md).

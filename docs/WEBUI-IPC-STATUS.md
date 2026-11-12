@@ -1,45 +1,42 @@
 # Estado de integración WebUI / IPC
 
-Esta versión integra el prototipo de panel y el módulo IPC en una copia de desarrollo. No es un plugin instalable ni un release.
+Actualizado: 2026-11-12. La integración forma parte del **PLG instalable 0.8.0-source-rc2**, publicado como prerelease. El prototipo que describía la primera versión de este documento ha sido sustituido por el paquete generado desde el árbol fuente.
 
-## Incluido
+## Implementado
 
-- `plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page`: registro de página en el menú Settings de Unraid.
-- `plugin/.../pages/index.php`: estado del daemon, temperaturas, FAN1/FAN2 y solicitudes de modo AUTO/SILENT/TURBO.
-- `src/unraid/fan_control/ipc.py`: intercambio JSON con validación de solicitud, caducidad, prevención de repetición y escritura atómica.
-- `src/unraid/rp2040_fan_control_webui_dev.py`: copia de desarrollo del daemon con IPC integrado; el archivo original `rp2040_fan_control.py` permanece sin cambios.
-- `tests/webui_ipc/`: pruebas unitarias IPC, carrera de publicación concurrente PHP, contrato PHP→Python, permisos de archivos, confirmación condicionada al resultado de transmisión y ciclo simulado con un serial manager falso.
+- Registro de la página mediante RP2040FanControl.page y render de pages/index.php dentro de Unraid.
+- Estado del servicio y controles de inicio, parada y reinicio.
+- Configuración persistente JSON de grupos HDD/CPU y selección del puerto serie antes del arranque.
+- Estado del controlador, temperaturas, avisos de fuentes y valores de comando/objetivo de FAN1 y FAN2.
+- Modos AUTO, SILENT y TURBO, con confirmación asociada al identificador de la solicitud.
+- Consulta periódica de solo lectura al endpoint PHP directo con rp2040_live=1.
+- Auxiliar privilegiado de acciones limitadas y reglas sudoers; PHP no necesita escritura global en el directorio IPC.
+- Validación de solicitudes, caducidad, prevención de repetición y publicación atómica mediante fan_control/ipc.py.
 
-## Precisión sobre las confirmaciones
+## Correcciones verificadas
 
-La interfaz informa de que el daemon aceptó el modo y lo transmitió por serie. El firmware actual no devuelve ACK, así que no puede afirmarse que el RP2040 haya confirmado la recepción o aplicación.
+- El campo operation evita el conflicto del nombre action con el tratamiento de formularios de Unraid.
+- La finalización del POST de modo respeta el render de la página contenedora y evita la página en blanco.
+- El sondeo usa la ruta PHP del plugin: la ruta Settings puede devolver la página HTML de Unraid en lugar de JSON.
+- El nombre interno rp2040-fan-control evita los espacios que impedían actualizar la celda de estado de Plugins.
 
-## Pendiente
+Los modos, la configuración y el estado en directo se comprobaron manualmente. Las pruebas automáticas cubren contratos PHP/Python, concurrencia, permisos, aislamiento de solicitudes y resultados de transmisión; consulta el alcance de la [validación actual](VALIDATION-STATUS.md).
 
-- Resolver y probar permisos reales del directorio `/var/run/rp2040-fan-control` para el usuario que ejecuta PHP/emhttp en la versión de Unraid de destino. No hacerlo world-writable.
-- La simulación de ciclo cubre recepción → selección de modo → envío simulado → resultado IPC, pero no ejecuta la función `main()` ni el bucle completo del daemon.
-- Ampliar la WebUI para configuración persistente y diagnóstico.
-- Implementar el `.plg` real (instalación, actualización, gestión de servicio y desinstalación).
-- Validar instalación y flujo completo en una VM o entorno de Unraid de pruebas.
+## Permisos y servicio
 
-No ejecutar el daemon integrado contra el hardware de producción.
+El wrapper crea el directorio IPC con modo 0750 y rechaza permisos de escritura de grupo/globales o propietario inesperado en un directorio existente. El acceso de la WebUI se realiza mediante el auxiliar y sudoers. La ausencia o caducidad del estado deshabilita los controles de modo.
 
-## Wrapper de servicio (borrador, no instalador)
+El servicio valida configuración, Python, pyserial y smartctl antes de iniciar. El intérprete puede seleccionarse mediante python-path o RP2040_PYTHON. La parada comprueba que el PID corresponde al daemon y utiliza SIGTERM; no fuerza SIGKILL automáticamente.
 
-Se añade `plugin/scripts/rp2040-fan-control` como envoltorio de servicio para revisar el ciclo de vida en aislamiento. No es un `.plg` y no se instala automáticamente.
+La instalación manual exige servicio detenido y ENABLE ausente. Tras un reinicio, el evento startup solo inicia si ENABLE está presente. Ambos estados de arranque se han comprobado mediante reinicios reales.
 
-Salvaguardas del borrador:
+## Precisión de las confirmaciones
 
-- `start` permanece desactivado si no existe `/boot/config/plugins/rp2040-fan-control/ENABLE`.
-- Rechaza la configuración ausente o con marcadores `REPLACE_WITH_`.
-- Comprueba Python, `pyserial` y `smartctl` antes de iniciar.
-- El directorio IPC se crea con modo `0750`; no se cambia su propietario/grupo ni se abren permisos globales.
-- `stop` comprueba que el PID corresponde a este daemon y usa `SIGTERM`; no recurre a `SIGKILL` automáticamente.
-- Logs y configuración local están pensados para permanecer bajo `/boot/config/plugins/rp2040-fan-control/`.
+La interfaz confirma aceptación por el daemon y escritura serie completada. El firmware actual no devuelve ACK; no se confirma recepción/aplicación por el RP2040 ni se miden RPM. Las simulaciones de transporte no prueban el comportamiento físico en una desconexión.
 
-Limitaciones pendientes antes de considerar un instalador:
+## Pendientes
 
-- Confirmar la identidad efectiva del proceso PHP/emhttp y probar lectura/escritura IPC en la versión de Unraid objetivo.
-- Revisar el arranque/parada real durante instalación, actualización y apagado en una VM de pruebas.
-- Definir cómo se distribuye el paquete de archivos (URL de release o paquete embebido); no se crea una URL ficticia ni un `.plg` que aparente ser instalable.
-- Verificar dependencias reales disponibles en Unraid y validar la ruta serial del RP2040 con hardware de pruebas, nunca con el servidor de producción.
+- Ensayos reales de desconexión/reconexión del RP2040 y pérdida de fuentes térmicas.
+- Revisión final de seguridad, compatibilidad y procedencia antes de promover a estable.
+
+Las tareas ya completadas de instalador, configuración persistente y permisos funcionales dejan de figurar como desarrollo pendiente. La [lista de publicación](PUBLICATION-CHECKLIST.md) y [VALIDATION-STATUS.md](VALIDATION-STATUS.md) recogen el trabajo restante.

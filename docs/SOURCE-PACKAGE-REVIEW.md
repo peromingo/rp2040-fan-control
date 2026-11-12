@@ -1,6 +1,8 @@
-# Source/package correspondence review
+# Revisión de correspondencia entre fuentes y paquete
 
-Scope: development source tree on `source-tree-review` and the retained auditfix24 integration payload. This report concerns repository code, not operational telemetry.
+Actualizado: 2026-11-12. La correspondencia del candidato fuente RC2 y su variante preview se comprueba en CI. El PLG publicado y los ensayos completados están en [VALIDATION-STATUS.md](VALIDATION-STATUS.md). Los apartados sobre auditfix24 conservan los hallazgos históricos; no describen el paquete actual.
+
+Este informe trata el código del repositorio y los paquetes públicos, sin telemetría de instalaciones.
 
 ## Historical auditfix24 finding
 
@@ -19,7 +21,9 @@ The two implementations have diverged. Neither should replace the other wholesal
 
 The six candidate-only source files are the sudoers policy, startup hook, image asset, WebUI helper, `configuration.py` and `serial_port_config.py`.
 
-## Consolidation required before a stable release
+## Plan histórico de consolidación
+
+Los puntos 1–4 siguientes se implementaron en la línea fuente RC1/RC2 y tienen comprobaciones automáticas. El punto 5 se divide ahora en canal preview y actualización desde Plugins completados, y canal estable pendiente.
 
 1. Integrate the candidate's configuration, control and WebUI features into the main source tree while retaining safe instance locking, interpreter selection and diagnostics.
 2. Store the transactional installation/removal logic as reviewed source templates. Build the payload and PLG from the consolidated tree instead of modifying an earlier embedded package.
@@ -35,8 +39,21 @@ The main runtime sources now include the integration configuration, helper, WebU
 
 `tools/build_integration_plg.py` builds from these sources and reviewed transaction templates. The official pyserial wheel is pinned by SHA-256. Verification compares all payload files/modes and both installer blocks against the sources and wheel, rejects unexpected files, and checks the deterministic archive. The app contains a source/hash manifest. This resolves source correspondence for this new candidate; historical auditfix artifacts are unchanged.
 
-The source-built candidate remains subject to CI and target validation before release. Its retained legacy package basename supports upgrading the existing integration-plugin registration. Stable update-channel metadata is still pending.
+El candidato RC2 dispone de CI y ensayos manuales registrados en [VALIDATION-STATUS.md](VALIDATION-STATUS.md). El nombre histórico del PLG mantiene el registro de actualización existente. El canal preview y la actualización RC1 → RC2 desde Plugins se han verificado; el canal estable sigue pendiente.
 
 ## Source RC2 WebUI completion fix
 
 Mode POST handling now preserves the rendered page if the enclosing Unraid shell has already sent headers. It always renders the included page and completes the form with a local GET navigation, leaving the outer response under Unraid control. The live JSON endpoint returns only the result matching the tracked request ID, allowing the confirmation message to update. Direct POST rejection remains in force. Regression tests emulate a previously emitted shell, pending-command conflicts, local return-route restrictions and result-ID isolation.
+
+## Estado vigente de la consolidación
+
+- [x] Fuentes consolidadas, plantillas transaccionales y generador desde el árbol real.
+- [x] Bloqueo de instancia estable y diagnóstico/selección del intérprete conservados.
+- [x] Correspondencia de archivos, permisos, scripts y dependencia fijada comprobada por el generador y CI.
+- [x] RC2 corrige la finalización del formulario de modos y conserva los contratos del endpoint directo.
+- [x] Variante preview con pluginURL y nombre interno normalizado; delta limitado a la cabecera.
+- [x] Instalación limpia, actualización desde Plugins y reinicio deshabilitado cerrados con el alcance del resumen de validación.
+- [ ] Ensayos físicos de desconexión y pérdida de fuentes térmicas.
+- [ ] Revisión final y canal estable.
+
+Los cambios posteriores de documentación no reconstruyen el instalador ni modifican el tag de la prerelease.
