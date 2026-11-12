@@ -4,6 +4,32 @@ Controlador y WebUI en desarrollo para regular ventiladores mediante un RP2040. 
 
 El candidato de revisión generado desde el código fuente es **0.8.0-source-rc2**. Combina asignaciones persistentes de discos y CPU en JSON, selección del puerto serie, una WebUI con datos en directo, avisos sobre las fuentes térmicas y arranque automático opcional, con protección contra instancias duplicadas y diagnóstico del intérprete Python. No es una versión estable; la validación de este conjunto en el sistema de destino sigue en curso.
 
+## Placas utilizadas
+
+El montaje utiliza una Radxa X4, un Quad SATA HAT para los discos y la SATA HAT Top Board con pantalla OLED, botón y ventilador. Estas fotografías oficiales sirven como referencia para identificar cada placa.
+
+<table>
+  <tr>
+    <th>Radxa X4</th>
+    <th>Quad SATA HAT</th>
+    <th>SATA HAT Top Board · OLED</th>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://radxa.com/products/x/x4/"><img src="https://radxa.com/x/x4/banner_radxa_x4.webp" alt="Placa Radxa X4 con RP2040 integrado" width="260"></a></td>
+    <td align="center"><a href="https://wiki.radxa.com/Dual_Quad_SATA_HAT"><img src="https://wiki.radxa.com/mw/images/thumb/b/b0/Quad_sata_hat_angle.png/500px-Quad_sata_hat_angle.png" alt="Quad SATA HAT con cuatro conectores SATA" width="260"></a></td>
+    <td align="center"><a href="https://wiki.radxa.com/Dual_Quad_SATA_HAT#SATA_HAT_Top_board.28Optional.29"><img src="https://wiki.radxa.com/mw/images/thumb/7/72/Sata_hat_top_board.png/500px-Sata_hat_top_board.png" alt="SATA HAT Top Board con pantalla OLED, botón y ventilador" width="260"></a></td>
+  </tr>
+  <tr>
+    <td>Placa principal con Intel N100 y RP2040 integrado.</td>
+    <td>Placa de expansión con cuatro conexiones SATA para discos.</td>
+    <td>Placa superior con OLED de 0,91 pulgadas, botón físico y ventilador PWM.</td>
+  </tr>
+</table>
+
+Unraid ejecuta el daemon y la WebUI. La comunicación por serie con el RP2040 permite enviar los comandos de ventilación y la información que se muestra en la OLED.
+
+Fotografías enlazadas desde [Radxa — X4](https://radxa.com/products/x/x4/) y [Radxa Wiki — Dual/Quad SATA HAT](https://wiki.radxa.com/Dual_Quad_SATA_HAT). Las imágenes de Radxa Wiki se atribuyen a Radxa y están sujetas a [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), salvo indicación específica del fabricante.
+
 ## Generar el PLG instalable para revisión
 
 Con Python 3.11 o posterior:
