@@ -30,6 +30,42 @@ Unraid ejecuta el daemon y la WebUI. La comunicación por serie con el RP2040 pe
 
 Fotografías enlazadas desde [Radxa — X4](https://radxa.com/products/x/x4/) y [Radxa Wiki — Dual/Quad SATA HAT](https://wiki.radxa.com/Dual_Quad_SATA_HAT). Las imágenes de Radxa Wiki se atribuyen a Radxa y están sujetas a [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), salvo indicación específica del fabricante.
 
+## Pines y comunicaciones
+
+Los GPIO siguientes son los que utiliza [el firmware incluido](firmware/rp2040/main.py). `GPIO` identifica el pin lógico del RP2040, tal como aparece en `machine.Pin(...)`. La columna X4 sigue la numeración del conector de 40 pines de la tabla oficial **v1.110**; Radxa publica otra numeración para revisiones anteriores. Comprueba la revisión de la placa antes de usar los números físicos como guía de conexión.
+
+| Función | GPIO del RP2040 | Pin X4 de 40 pines · v1.110 | Pin Top Board · 2×5 | Uso en el proyecto |
+| --- | --- | --- | --- | --- |
+| Ventilador FAN1 | GPIO13 | 33 | 8 · PWM | Primera salida de control de ventilación, PWM a 25 kHz; corresponde al PWM del ventilador de la Top Board. |
+| Ventilador FAN2 | GPIO19 | 32 | — | Segunda salida PWM a 25 kHz; su conexión corresponde al segundo ventilador del montaje. |
+| OLED · SDA | GPIO28 | 3 | 1 · SDA | Datos de la pantalla mediante SoftI2C. |
+| OLED · SCL | GPIO29 | 5 | 3 · SCL | Reloj de SoftI2C a 100 kHz. |
+| OLED · reset | GPIO22 | 16 | 5 · reset | Pulso a nivel bajo y después alto para reiniciar la pantalla al arrancar. |
+| Botón de la Top Board | GPIO5 | 11 | 6 · botón | Entrada con pull-up interno; pulsado a nivel bajo. |
+| Control SATA · primera línea | GPIO14 | 37 | — | Línea de reset/habilitación del HAT, correspondiente a SATA 3/4 según su pinout; primera en ponerse a nivel alto. |
+| Control SATA · segunda línea | GPIO24 | 22 | — | Línea de reset/habilitación del HAT, correspondiente a SATA 1/2 según su pinout; segunda en ponerse a nivel alto. |
+
+La numeración de la Top Board corresponde a su conector de **2×5 pines**, no al conector de 40 pines de la X4. En ese conector, el fabricante identifica además el pin 2 como 3,3 V, el 4 como 5 V, el 7 y el 9 como GND y el 10 como NC. Los GPIO de la tabla son señales de control; la alimentación de los ventiladores y discos se realiza mediante los conectores de alimentación correspondientes.
+
+El firmware configura la OLED como **128×32 píxeles**, con dirección I2C **`0x3C`**. El botón permite cambiar de página con una pulsación corta, encender/apagar la OLED con doble pulsación y solicitar el siguiente modo AUTO/SILENT/TURBO manteniéndolo pulsado al menos dos segundos.
+
+FAN1 y FAN2 son grupos de control: las fuentes HDD/CPU que regulan cada uno se eligen en la WebUI. Conserva la secuencia SATA del firmware: ambas líneas bajas, espera de 0,2 s, GPIO14 alto, espera de 0,4 s, GPIO24 alto y estabilización de 1,5 s.
+
+Referencias del fabricante: [GPIO de Radxa X4 y sus revisiones](https://docs.radxa.com/en/x/x4/software/gpio) y [pinout del Quad SATA HAT y la Top Board](https://wiki.radxa.com/Dual_Quad_SATA_HAT#PINOUT).
+
+### USB, puerto serie y conexión de los discos
+
+| Enlace | Interfaz utilizada | Identificación o configuración |
+| --- | --- | --- |
+| Unraid ↔ RP2040 integrado en la X4 | USB CDC de MicroPython, presentado como puerto serie virtual | `/dev/ttyACM0` u otro `/dev/ttyACM<N>`. Es preferible guardar una ruta estable `/dev/serial/by-id/...` desde la WebUI. |
+| Configuración del daemon | pyserial sobre ese puerto USB | `BAUDRATE = 115200`; es el parámetro de apertura del puerto virtual, no la velocidad del enlace USB. |
+| RP2040 ↔ OLED | SoftI2C | SDA GPIO28, SCL GPIO29, 100 kHz y dirección `0x3C`. |
+| Quad SATA HAT ↔ sistema | USB 3 para los datos de los discos | Es un enlace de almacenamiento distinto del puerto serie USB que utiliza el daemon para el RP2040. |
+
+El firmware recibe las tramas por `sys.stdin.buffer` y envía las solicitudes del botón por `sys.stdout`. El código actual no configura `machine.UART` ni requiere cablear pines TX/RX para ese enlace. La [documentación de Radxa](https://docs.radxa.com/en/x/x4/software/c_sdk_examples) describe las opciones USB/UART de la X4; este proyecto utiliza USB.
+
+El selector guarda la elección en `/boot/config/plugins/rp2040-fan-control/serial_port.conf`. En automático se exige un único candidato compatible: primero se buscan rutas `by-id` hacia un `ttyACM` y después dispositivos `ttyACM` directos. Si hay varios candidatos, hay que elegir uno explícitamente. La WebUI no ofrece los puertos `ttyS`.
+
 ## Generar el PLG instalable para revisión
 
 Con Python 3.11 o posterior:
