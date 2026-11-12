@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+logs/
+rp2040_fan_control.lock
+src/unraid/fan_control/site_config_local.py
+src/unraid/fan_control/site_config.py
+.env
+
+
+dist/

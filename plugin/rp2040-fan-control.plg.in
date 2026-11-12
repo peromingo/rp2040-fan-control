@@ -1,0 +1,89 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "rp2040-fan-control">
+<!ENTITY author "Sergio Peromingo">
+<!ENTITY version "__VERSION__">
+<!ENTITY pluginURL "__PLUGIN_URL__">
+<!ENTITY payloadURL "__PAYLOAD_URL__">
+<!ENTITY payloadName "rp2040-fan-control-__VERSION__-payload.tar.gz">
+<!ENTITY payloadSHA256 "__PAYLOAD_SHA256__">
+<!ENTITY pluginDir "/boot/config/plugins/&name;">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="7.0.0" support="__SUPPORT_URL__">
+<CHANGES>
+### &version;
+- Pre-release WebUI/IPC integration for the RP2040 SATA HAT fan controller.
+- The daemon remains disabled until explicitly configured and enabled.
+- This release must be tested in an isolated Unraid VM before production use.
+</CHANGES>
+
+<!-- Create only this plugin's persistent directory before the versioned download. -->
+<FILE Run="/bin/bash">
+<INLINE><![CDATA[
+set -eu
+PLUGIN_DIR="/boot/config/plugins/rp2040-fan-control"
+[ ! -L "$PLUGIN_DIR" ] || { echo 'rp2040-fan-control: refusing symlink at persistent plugin directory.' >&2; exit 1; }
+if [ ! -e "$PLUGIN_DIR" ]; then
+  (umask 027; mkdir -p "$PLUGIN_DIR")
+  chmod 0750 "$PLUGIN_DIR"
+else
+  [ -d "$PLUGIN_DIR" ] || { echo 'rp2040-fan-control: persistent plugin path is not a directory.' >&2; exit 1; }
+  [ "$(stat -c '%u' "$PLUGIN_DIR")" = 0 ] || { echo 'rp2040-fan-control: persistent plugin directory must belong to root.' >&2; exit 1; }
+  MODE="$(stat -c '%a' "$PLUGIN_DIR")"
+  case "$MODE" in *[2367]|*[2367][0-7]) echo 'rp2040-fan-control: persistent plugin directory is group/world writable; refusing to alter permissions.' >&2; exit 1 ;; esac
+fi
+]]></INLINE>
+</FILE>
+
+<!-- Versioned cache name prevents stale payload reuse during upgrades. -->
+<FILE Name="&pluginDir;/&payloadName;">
+<URL>&payloadURL;</URL>
+<SHA256>&payloadSHA256;</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE><![CDATA[
+set -eu
+PLUGIN_DIR="/boot/config/plugins/rp2040-fan-control"
+PAYLOAD="$PLUGIN_DIR/rp2040-fan-control-__VERSION__-payload.tar.gz"
+EXPECTED_SHA256="__PAYLOAD_SHA256__"
+command -v sha256sum >/dev/null 2>&1 || { echo 'rp2040-fan-control: sha256sum is required; aborting.' >&2; exit 1; }
+[ -f "$PAYLOAD" ] || { echo 'rp2040-fan-control: verified payload is missing; aborting.' >&2; exit 1; }
+ACTUAL_SHA256="$(sha256sum "$PAYLOAD" | awk '{print $1}')"
+[ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || { echo 'rp2040-fan-control: payload SHA-256 mismatch; aborting.' >&2; exit 1; }
+if tar -tzf "$PAYLOAD" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
+  echo 'rp2040-fan-control: unsafe archive path detected; aborting.' >&2
+  exit 1
+fi
+if tar -tvzf "$PAYLOAD" | awk 'substr($0,1,1)=="l" || substr($0,1,1)=="h" { found=1 } END { exit found ? 0 : 1 }'; then
+  echo 'rp2040-fan-control: archive links are not allowed; aborting.' >&2
+  exit 1
+fi
+STAGE="$(mktemp -d /tmp/rp2040-fan-control-install.XXXXXX)"
+cleanup() { rm -rf "$STAGE"; }
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+tar -xzf "$PAYLOAD" --no-same-owner --no-overwrite-dir -C "$STAGE"
+INSTALLER="$STAGE/usr/local/share/rp2040-fan-control/install.sh"
+[ -x "$INSTALLER" ] || { echo 'rp2040-fan-control: payload installer missing; aborting.' >&2; exit 1; }
+"$INSTALLER" "$STAGE"
+]]></INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE><![CDATA[
+set -eu
+WRAPPER="/usr/local/sbin/rp2040-fan-control"
+WEB_DIR="/usr/local/emhttp/plugins/rp2040-fan-control"
+if [ -x "$WRAPPER" ]; then
+  "$WRAPPER" stop || { echo 'rp2040-fan-control: daemon would not stop; refusing removal.' >&2; exit 1; }
+fi
+[ ! -L "$WEB_DIR" ] || { echo 'rp2040-fan-control: refusing symlink at WebUI directory.' >&2; exit 1; }
+rm -rf "$WEB_DIR"
+rm -f "$WRAPPER"
+rm -rf /var/run/rp2040-fan-control
+# Keep /boot/config/plugins/rp2040-fan-control/app and logs for safe reinstall.
+echo 'rp2040-fan-control: WebUI and wrapper removed; persistent configuration/logs retained.'
+]]></INLINE>
+</FILE>
+</PLUGIN>

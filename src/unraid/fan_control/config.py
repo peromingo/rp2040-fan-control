@@ -1,0 +1,18 @@
+import os
+from pathlib import Path
+
+# Defaults to the repository root; override with RP2040_BASE_DIR in deployment.
+BASE_DIR = Path(os.environ.get("RP2040_BASE_DIR", Path(__file__).resolve().parents[1]))
+LOG_DIR = Path(os.environ.get("RP2040_LOG_DIR", BASE_DIR / "logs"))
+LOG_FILE = LOG_DIR / "rp2040_fan_control.log"
+
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+SUMMARY_INTERVAL_SECONDS = 300
+CYCLE_DIAG_INTERVAL_SECONDS = 300
+SMART_TEMPERATURE_INTERVAL_SECONDS = 10
+SMART_BASIC_INTERVAL_SECONDS = 900
+SERIAL_TIMEOUT_SECONDS = 2
+INVALID_TEMPERATURE_VALUES = (-127, 0)
+MIN_VALID_TEMPERATURE = -20
+MAX_VALID_TEMPERATURE = 100

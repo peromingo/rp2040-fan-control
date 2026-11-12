@@ -1,0 +1,73 @@
+"""Build correspondence and tamper rejection without any hardware access."""
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from tools.build_integration_plg import build, collect_files, payload_bytes, render_plg, verify, digest, APP, ROOT, PLG_NAME, source_version
+
+WHEEL = os.environ.get('RP2040_TEST_WHEEL')
+
+@unittest.skipUnless(WHEEL, 'Set RP2040_TEST_WHEEL to the pinned pyserial wheel')
+class SourcePackageTests(unittest.TestCase):
+    def test_two_builds_are_identical_and_verify_against_source(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            first, second = build(a, WHEEL), build(b, WHEEL)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertGreater(verify(first, WHEEL), 0)
+
+    def test_committed_review_package_and_checksum_match_sources(self):
+        path = ROOT / 'plugin/candidates' / source_version().split('-', 1)[1] / PLG_NAME
+        self.assertGreater(verify(path, WHEEL), 0)
+        expected = Path(str(path) + '.sha256').read_text().split()[0]
+        self.assertEqual(digest(path.read_bytes()), expected)
+
+    def test_changed_payload_is_rejected_even_with_valid_embedded_hash(self):
+        files = collect_files(WHEEL)
+        name = APP + 'fan_control/fan_controller.py'
+        data, mode = files[name]
+        files[name] = (data + b'\n# simulated tampering\n', mode)
+        forged, _ = render_plg(payload_bytes(files))
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / 'forged.plg'
+            p.write_bytes(forged)
+            with self.assertRaisesRegex(ValueError, 'payload mismatch'):
+                verify(p, WHEEL)
+
+    def test_changed_installer_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = build(td, WHEEL)
+            p.write_bytes(p.read_bytes().replace(b'set -eu', b'set -eu\n# unexpected installer edit', 1))
+            with self.assertRaisesRegex(ValueError, 'templates'):
+                verify(p, WHEEL)
+
+    def test_wrong_dependency_wheel_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / 'wrong.whl'
+            p.write_bytes(b'not the pinned dependency')
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                collect_files(p)
+
+    def test_installed_licenses_and_notices_are_complete(self):
+        files = collect_files(WHEEL)
+        self.assertEqual(files[APP + 'LICENSES/project-MIT.txt'], ((ROOT / 'LICENSE').read_bytes(), 0o644))
+        self.assertEqual(files[APP + 'LICENSES/pyserial-3.5-BSD-3-Clause.txt'],
+                         ((ROOT / 'third_party/pyserial/LICENSE.txt').read_bytes(), 0o644))
+        self.assertEqual(files[APP + 'THIRD_PARTY_NOTICES.md'][0], (ROOT / 'THIRD_PARTY_NOTICES.md').read_bytes())
+
+    def test_license_checksum_mismatch_is_rejected(self):
+        from tools.build_integration_plg import source_files
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = root / 'third_party/pyserial/LICENSE.txt'
+            p.parent.mkdir(parents=True)
+            p.write_bytes(b'truncated license fixture')
+            with self.assertRaisesRegex(ValueError, 'license checksum'):
+                source_files(root)
+
+    def test_plugin_identity_and_update_url_are_built_in(self):
+        import xml.etree.ElementTree as ET
+        from tools.prepare_update_manifest import PLUGIN_ID, PREVIEW_URL
+        data, _ = render_plg(payload_bytes(collect_files(WHEEL)))
+        metadata = ET.fromstring(data).attrib
+        self.assertEqual(metadata['name'], PLUGIN_ID)
+        self.assertEqual(metadata['pluginURL'], PREVIEW_URL)

@@ -1,0 +1,109 @@
+#!/bin/sh
+# Narrow, root-owned bridge for the Unraid PHP UI. No arbitrary command execution.
+set -eu
+PLUGIN_DIR=/boot/config/plugins/rp2040-fan-control
+APP_DIR="$PLUGIN_DIR/app"
+CONFIG="$PLUGIN_DIR/config.json"
+WRAPPER=/usr/local/sbin/rp2040-fan-control
+PYTHON="${RP2040_PYTHON:-$(command -v python3 || true)}"
+
+[ "$(id -u)" -eq 0 ] || { echo 'error: root required' >&2; exit 1; }
+[ -n "$PYTHON" ] && [ -x "$PYTHON" ] || { echo 'error: python3 unavailable' >&2; exit 1; }
+export PYTHONPATH="$APP_DIR/vendor:$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+export RP2040_FAN_CONFIG="$CONFIG"
+
+case "${1:-}" in
+  status)
+    if "$WRAPPER" status >/dev/null 2>&1; then printf '{"state":"running"}\n'; else printf '{"state":"stopped"}\n'; fi
+    ;;
+  start)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    # A WebUI click is the explicit opt-in to enable/start the daemon.
+    "$PYTHON" -c 'from fan_control.configuration import load_configuration; load_configuration()' >/dev/null
+    umask 077
+    : > "$PLUGIN_DIR/ENABLE"
+    if "$WRAPPER" start; then echo 'Daemon iniciado.'; else rm -f "$PLUGIN_DIR/ENABLE"; exit 1; fi
+    ;;
+  stop)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    "$WRAPPER" stop
+    rm -f "$PLUGIN_DIR/ENABLE"
+    echo 'Daemon detenido y arranque explícito deshabilitado.'
+    ;;
+  restart)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    [ -f "$PLUGIN_DIR/ENABLE" ] || { echo 'error: el daemon no está habilitado; usa Iniciar.' >&2; exit 1; }
+    if "$WRAPPER" restart; then :; else rm -f "$PLUGIN_DIR/ENABLE"; exit 1; fi
+    ;;
+  inventory)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    "$PYTHON" - <<'PY'
+import json, subprocess
+from fan_control.temperature import get_candidate_disks, get_disk_identity
+items=[]
+for device in get_candidate_disks():
+    identity=get_disk_identity(device)
+    if not identity: continue
+    model, serial=identity
+    items.append({'device':device,'model':model,'serial':serial})
+print(json.dumps(items, ensure_ascii=False, separators=(',', ':')))
+PY
+    ;;
+  serial-config)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    "$PYTHON" -c 'import json; from fan_control.serial_port_config import get_config; print(json.dumps(get_config(), separators=(",", ":")))'
+    ;;
+  save-serial-port)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    [ ! -e "$PLUGIN_DIR/ENABLE" ] || { echo 'error: detén y deshabilita el daemon antes de cambiar el puerto' >&2; exit 1; }
+    if "$WRAPPER" status >/dev/null 2>&1; then echo 'error: detén el daemon antes de cambiar el puerto' >&2; exit 1; fi
+    input=$(head -c 1025)
+    [ "${#input}" -le 1024 ] || { echo 'error: request too large' >&2; exit 1; }
+    printf '%s' "$input" | "$PYTHON" -c 'import json,sys; from fan_control.serial_port_config import save_selected; value=json.load(sys.stdin).get("port"); print(save_selected(value))'
+    ;;
+  get-config)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    if [ -f "$CONFIG" ]; then
+      "$PYTHON" - <<'PY'
+import json, os
+from fan_control.configuration import validate_payload, config_path
+print(json.dumps(validate_payload(json.loads(config_path().read_text(encoding='utf-8'))), ensure_ascii=False))
+PY
+    else
+      # Show existing local assignments on upgraded installs instead of
+      # presenting an empty UI while the daemon still uses site_config_local.py.
+      "$PYTHON" - <<'PYCONFIG'
+import json
+try:
+    from fan_control.configuration import load_configuration
+    fan1, fan2, cpu1, cpu2 = load_configuration()
+    def pack(disks, use_cpu):
+        return {"disks": [{"model": model, "serial": serial} for model, serial in sorted(disks)], "use_cpu": use_cpu}
+    payload = {"schema_version": 1, "fans": {"fan1": pack(fan1, cpu1), "fan2": pack(fan2, cpu2)}}
+except Exception:
+    payload = {"schema_version": 1, "fans": {"fan1": {"disks": [], "use_cpu": False}, "fan2": {"disks": [], "use_cpu": False}}}
+print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+PYCONFIG
+    fi
+    ;;
+  save-config)
+    [ "$#" -eq 1 ] || { echo 'error: invalid arguments' >&2; exit 2; }
+    # Limit input size before handing it to the validator.
+    input=$(head -c 32769)
+    [ "${#input}" -le 32768 ] || { echo 'error: config too large' >&2; exit 1; }
+    printf '%s' "$input" | "$PYTHON" -c '
+import json, sys
+from fan_control.configuration import validate_payload, save_configuration
+from fan_control.temperature import get_candidate_disks, get_disk_identity
+payload = validate_payload(json.load(sys.stdin))
+known = {get_disk_identity(device) for device in get_candidate_disks()}
+known.discard(None)
+selected = {(disk["model"], disk["serial"]) for fan in payload["fans"].values() for disk in fan["disks"]}
+if not selected.issubset(known):
+    raise SystemExit("La configuración contiene discos que ya no están en el inventario actual.")
+save_configuration(payload)
+'
+    echo 'Configuración guardada y validada.'
+    ;;
+  *) echo 'Uso: rp2040-fan-control-webui {status|inventory|get-config|save-config|serial-config|save-serial-port|start|stop|restart}' >&2; exit 2 ;;
+esac

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Unraid startup runs after plugin installation, before array status is valid.
+# Start fan control independently of whether the array is started.
+set -eu
+BASE=/boot/config/plugins/rp2040-fan-control
+WRAPPER=/usr/local/sbin/rp2040-fan-control
+[ -f "$BASE/ENABLE" ] && [ ! -L "$BASE/ENABLE" ] || exit 0
+[ -x "$WRAPPER" ] || { logger -t rp2040-fan-control "Autostart: falta el wrapper"; exit 0; }
+if ! pending=$(find "$BASE/backup" -name recovery-pending -print -quit); then
+    logger -t rp2040-fan-control "Autostart: no se pudo comprobar la recuperación"
+    exit 0
+fi
+if [ -n "$pending" ]; then
+    logger -t rp2040-fan-control "Autostart: recuperación pendiente; daemon no iniciado"
+    exit 0
+fi
+mkdir -p "$BASE/logs"
+# Bound the hook so a startup error cannot hold emhttp indefinitely.
+if ! timeout 30 "$WRAPPER" start >> "$BASE/logs/boot.log" 2>&1; then
+    logger -t rp2040-fan-control "Autostart fallido; revise logs/boot.log"
+fi
+exit 0

@@ -1,0 +1,77 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: none
+      - name: Prepare pinned build and test dependency
+        run: |
+          python -m pip download --no-deps --dest /tmp/rp2040-deps pyserial==3.5
+          echo "c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0  /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl" | sha256sum -c
+          python -m pip install --no-deps /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
+      - name: Python syntax
+        run: PYTHONPYCACHEPREFIX=/tmp/rp2040-pycache python -m compileall -q src tests tools
+      - name: Unit and integration-contract tests
+        env:
+          PYTHONPATH: src/unraid
+          PYTHONDONTWRITEBYTECODE: "1"
+          RP2040_TEST_WHEEL: /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
+        run: python -m unittest discover -s tests -v
+      - name: Publication source audit
+        run: python tools/audit_publication.py .
+      - name: PHP and shell syntax
+        run: |
+          php -l plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php
+          sh -n plugin/scripts/rp2040-fan-control
+          sh -n plugin/src/usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart
+          bash -n plugin/templates/integration-install.sh.in
+          bash -n plugin/templates/integration-remove.sh.in
+      - name: Build source PLG and verify payload
+        run: |
+          python tools/build_integration_plg.py dist/ci-a --wheel /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
+          (cd dist/ci-a && sha256sum -c rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256)
+          python tools/audit_publication.py --payload dist/ci-a/payload.tar.gz
+          python tools/test_boot_candidate.py dist/ci-a
+      - name: Verify retained RC2 preview update metadata
+        run: |
+          SOURCE_HASH=$(awk '{print $1}' plugin/candidates/source-rc2/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256)
+          python tools/prepare_update_manifest.py plugin/candidates/source-rc2/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg dist/preview --expected-sha256 "$SOURCE_HASH"
+          python tools/prepare_update_manifest.py plugin/candidates/source-rc2/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg dist/preview --expected-sha256 "$SOURCE_HASH" --verify
+          cmp dist/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
+          cmp dist/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256 plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg.sha256
+          cmp dist/preview/manifest.json plugin/channels/preview/manifest.json
+      - name: Verify deterministic source build
+        run: |
+          python tools/build_integration_plg.py dist/ci-b --wheel /tmp/rp2040-deps/pyserial-3.5-py2.py3-none-any.whl
+          cmp dist/ci-a/payload.tar.gz dist/ci-b/payload.tar.gz
+          cmp dist/ci-a/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg dist/ci-b/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg
+      - uses: actions/upload-artifact@v4
+        if: matrix.python-version == '3.11'
+        with:
+          name: rp2040-fan-control-source-review
+          path: |
+            dist/ci-a/*.plg
+            dist/ci-a/*.sha256
+            dist/ci-a/payload.tar.gz
+            dist/preview/*.plg
+            dist/preview/*.sha256
+            dist/preview/manifest.json
+          if-no-files-found: error
+          retention-days: 14
