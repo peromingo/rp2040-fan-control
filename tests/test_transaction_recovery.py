@@ -109,7 +109,9 @@ exec /bin/cp "$@"
     def test_repeat_install_failure_restores_immediate_state_and_keeps_uninstall_baseline(self):
         self.preceding_runtime()
         policy = self.root / 'etc/sudoers.d/rp2040-fan-control-webui'
+        policy.chmod(0o600)
         policy.write_bytes(policy.read_bytes() + b'\n# preceding policy fixture\n')
+        policy.chmod(0o440)
         previous = self.snapshot()
         baseline = self.snapshot(self.baseline)
         for fault in ({'PAGE_FAULT': 'fail'}, {'FAIL_AUTH': '1'}):
