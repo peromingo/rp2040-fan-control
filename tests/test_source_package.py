@@ -46,3 +46,28 @@ class SourcePackageTests(unittest.TestCase):
             p.write_bytes(b'not the pinned dependency')
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 collect_files(p)
+
+    def test_installed_licenses_and_notices_are_complete(self):
+        files = collect_files(WHEEL)
+        self.assertEqual(files[APP + 'LICENSES/project-MIT.txt'], ((ROOT / 'LICENSE').read_bytes(), 0o644))
+        self.assertEqual(files[APP + 'LICENSES/pyserial-3.5-BSD-3-Clause.txt'],
+                         ((ROOT / 'third_party/pyserial/LICENSE.txt').read_bytes(), 0o644))
+        self.assertEqual(files[APP + 'THIRD_PARTY_NOTICES.md'][0], (ROOT / 'THIRD_PARTY_NOTICES.md').read_bytes())
+
+    def test_license_checksum_mismatch_is_rejected(self):
+        from tools.build_integration_plg import source_files
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = root / 'third_party/pyserial/LICENSE.txt'
+            p.parent.mkdir(parents=True)
+            p.write_bytes(b'truncated license fixture')
+            with self.assertRaisesRegex(ValueError, 'license checksum'):
+                source_files(root)
+
+    def test_plugin_identity_and_update_url_are_built_in(self):
+        import xml.etree.ElementTree as ET
+        from tools.prepare_update_manifest import PLUGIN_ID, PREVIEW_URL
+        data, _ = render_plg(payload_bytes(collect_files(WHEEL)))
+        metadata = ET.fromstring(data).attrib
+        self.assertEqual(metadata['name'], PLUGIN_ID)
+        self.assertEqual(metadata['pluginURL'], PREVIEW_URL)

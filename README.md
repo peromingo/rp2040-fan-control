@@ -138,3 +138,16 @@ El paquete RC2 revisado también está disponible con los metadatos de comprobac
 La comprobación de actualizaciones no modifica el daemon en ejecución. Para instalar una actualización ofrecida, sigue siendo necesario detener el servicio y retirar ENABLE mediante el auxiliar; después de instalarla, hay que arrancarlo explícitamente. El instalador rechaza deliberadamente las actualizaciones con el servicio habilitado o en ejecución.
 
 Las notas de la prerelease publicada, la identidad de sus archivos y los límites de validación están en [docs/releases/v0.8.0-source-rc2.md](docs/releases/v0.8.0-source-rc2.md). Un canal de versiones preliminares sirve para distribuir paquetes de pruebas revisados; no implica su promoción automática a una versión estable.
+
+## Candidato RC3
+
+Se prepara **0.8.0-source-rc3** para validar la recuperación de instalaciones y la
+inclusión de licencias completas en el PLG. RC2 continúa siendo el prerelease del
+canal preview. El firmware y el control térmico conservan su comportamiento.
+
+- [Paquete y SHA-256 de RC3](plugin/candidates/source-rc3/README.md)
+- [Cambios y pruebas pendientes de RC3](docs/VALIDATION-RC3.md)
+- [Licencias de terceros](THIRD_PARTY_NOTICES.md)
+
+El candidato requiere el daemon detenido y ENABLE ausente al actualizar. No hay que
+desinstalar RC2 previamente para realizar esa actualización.

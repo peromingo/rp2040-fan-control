@@ -12,6 +12,7 @@ STARTUP_EVENT="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/event/st
 SUDOERS="$ROOT_PREFIX/etc/sudoers.d/rp2040-fan-control-webui"
 JOURNAL="$BASE/recovery-pending"
 RESUME_UNINSTALL=0
+TRANSACTION="$BASE.transaction"
 
 # Reject symlinked components on security-sensitive paths before reading or writing them.
 assert_no_symlink_path() {
@@ -56,10 +57,20 @@ validate_checksum_manifest() {
   done < "$file"
 }
 # Refuse symlinked path components before reading journal or modifying destinations.
-for guarded_path in "$P" "$P/backup" "$BASE" "$JOURNAL" "$WRAPPER" "$HELPER" "$PAGE" "$PAGE_ENTRY" "$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS" "$P/ENABLE"; do
+for guarded_path in "$P" "$P/backup" "$BASE" "$JOURNAL" "$WRAPPER" "$HELPER" "$PAGE" "$PAGE_ENTRY" "$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS" "$P/ENABLE" "$TRANSACTION" "$TRANSACTION/recovery-pending" "$P/backup/.lifecycle.lock"; do
   assert_no_symlink_path "$guarded_path"
 done
 validate_recovery_journal "$JOURNAL"
+command -v flock >/dev/null 2>&1 || { echo "ERROR: falta flock; no se desinstala" >&2; exit 1; }
+[ -d "$P/backup" ] || { echo "ERROR: faltan las copias de seguridad" >&2; exit 1; }
+(umask 077; : >> "$P/backup/.lifecycle.lock")
+exec 9>>"$P/backup/.lifecycle.lock"
+flock -n 9 || { echo "ERROR: hay otra operación del plugin en curso" >&2; exit 1; }
+pending_journals="$(find "$P/backup" -name recovery-pending -print)" || { echo "ERROR: no se pudieron comprobar los diarios" >&2; exit 1; }
+while IFS= read -r pending; do
+  [ -n "$pending" ] || continue
+  [ "$pending" = "$JOURNAL" ] || { echo "ERROR: recuperación pendiente; usa el instalador correspondiente antes de desinstalar: $pending" >&2; exit 1; }
+done <<< "$pending_journals"
 # An interrupted install journal may include local-config-created=1. Do not let the
 # uninstaller clear that journal without applying the install-recovery semantics.
 # The installer is the only entry point that knows how to remove that candidate-created
@@ -169,6 +180,7 @@ while IFS="$(printf '\t')" read -r KIND REL || [ -n "${KIND:-}${REL:-}" ]; do
   else [ ! -e "$dest" ] && [ ! -L "$dest" ] || { echo "ERROR: $dest debería estar ausente; diario conservado" >&2; exit 1; }; fi
 done < "$BASE/manifest"
 if command -v visudo >/dev/null 2>&1; then visudo -c >/dev/null 2>&1 || { echo "ERROR: la reversión terminó, pero la validación de sudoers falló; diario conservado." >&2; exit 1; }; fi
+sync
 rm -f "$JOURNAL" || { echo "ERROR: no se pudo retirar el diario; recuperación pendiente" >&2; exit 1; }
 sync
 echo "Reversión de integración aplicada y verificada. Configuración JSON/local, logs y copias de seguridad conservados."

@@ -11,6 +11,8 @@ PAGE_ICON="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/images/fan.p
 STARTUP_EVENT="$ROOT_PREFIX/usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart"
 SUDOERS="$ROOT_PREFIX/etc/sudoers.d/rp2040-fan-control-webui"
 BASE="$P/backup/webui-integration-source-@@VERSION@@"
+TRANSACTION="$BASE.transaction"
+TRANSACTION_CREATED=0
 TMP="$(mktemp -d)"
 COMMIT=0
 BASELINE_TOUCHED=0
@@ -119,7 +121,7 @@ restore_baseline() {
   # Durable marker: leave it in place on any error so the next run can retry recovery.
   validate_recovery_journal "$recovery_journal" || return 1
   if [ ! -e "$recovery_journal" ] && [ ! -L "$recovery_journal" ]; then
-    printf 'recovery-v1\nstarted=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$recovery_journal" || return 1
+    printf 'recovery-v1\nstarted=%s\nsource=installer\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$recovery_journal" || return 1
     chmod 0600 "$recovery_journal" || return 1
     sync
   fi
@@ -165,34 +167,134 @@ restore_baseline() {
   fi
   verify_restored_baseline || { echo "ERROR: restauración no verificada; diario conservado en $recovery_journal" >&2; return 1; }
   if command -v visudo >/dev/null 2>&1; then visudo -c >/dev/null 2>&1 || { echo "ERROR: visudo falla tras restaurar; diario conservado" >&2; return 1; }; fi
+  sync || return 1
   rm -f "$recovery_journal" || { echo "ERROR: no se pudo retirar el diario tras verificar; recuperación pendiente" >&2; return 1; }
   sync
 }
+capture_snapshot() {
+  local destination="$1"
+  [ ! -e "$destination" ] && [ ! -L "$destination" ] || { echo "ERROR: existe una copia base sin marcador; no se sobrescribe: $destination" >&2; exit 1; }
+  local BASE_STAGE
+  BASE_STAGE="$(mktemp -d "$TMP/snapshot.XXXXXX")"
+  mkdir -p "$BASE_STAGE/files"
+  : > "$BASE_STAGE/manifest"
+  backup_path() {
+    key="$1"; dest="$2"
+    if [ -e "$dest" ]; then
+      [ -f "$dest" ] || { echo "ERROR: la ruta existente no es un archivo regular: $dest" >&2; return 1; }
+      mkdir -p "$BASE_STAGE/files/$(dirname "$key")"
+      cp -p "$dest" "$BASE_STAGE/files/$key" || return 1
+      cmp -s "$dest" "$BASE_STAGE/files/$key" || { echo "ERROR: la copia no coincide con el original: $dest" >&2; return 1; }
+      printf 'EXISTING\t%s\n' "$key" >> "$BASE_STAGE/manifest"
+    else
+      printf 'NEW\t%s\n' "$key" >> "$BASE_STAGE/manifest"
+    fi
+  }
+  backup_path usr/local/sbin/rp2040-fan-control "$WRAPPER"
+  backup_path usr/local/sbin/rp2040-fan-control-webui "$HELPER"
+  backup_path usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php "$PAGE"
+backup_path usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page "$PAGE_ENTRY"
+backup_path usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png "$PAGE_ICON"
+backup_path usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart "$STARTUP_EVENT"
+  backup_path etc/sudoers.d/rp2040-fan-control-webui "$SUDOERS"
+  while IFS= read -r -d '' src; do
+    rel="${src#"$SRC_APP"/}"
+    [ "$rel" = "fan_control/site_config_local.py" ] && continue
+    dest="$APP/$rel"
+    if [ -e "$dest" ]; then
+      [ -f "$dest" ] || { echo "ERROR: la ruta existente no es un archivo regular: $dest" >&2; exit 1; }
+      mkdir -p "$BASE_STAGE/files/app/$(dirname "$rel")"
+      cp -p "$dest" "$BASE_STAGE/files/app/$rel" || { echo "ERROR: no se pudo copiar $dest" >&2; exit 1; }
+      cmp -s "$dest" "$BASE_STAGE/files/app/$rel" || { echo "ERROR: la copia no coincide con el original: $dest" >&2; exit 1; }
+      printf 'EXISTING_APP\t%s\n' "$rel" >> "$BASE_STAGE/manifest"
+    else
+      printf 'NEW_APP\t%s\n' "$rel" >> "$BASE_STAGE/manifest"
+    fi
+  done < <(find "$SRC_APP" -type f -print0)
+  chmod 0700 "$BASE_STAGE" "$BASE_STAGE/files"
+  chmod 0600 "$BASE_STAGE/manifest"
+  ( cd "$BASE_STAGE" && { sha256sum manifest; find files -type f -print0 | sort -z | xargs -0 -r sha256sum; } > SHA256SUMS ) || { echo "ERROR: no se pudo generar SHA256SUMS; no se publica la copia base" >&2; exit 1; }
+  chmod 0600 "$BASE_STAGE/SHA256SUMS"
+  ( cd "$BASE_STAGE" && sha256sum -c SHA256SUMS >/dev/null ) || { echo "ERROR: la copia base temporal no supera SHA-256" >&2; exit 1; }
+  : > "$BASE_STAGE/baseline-created"
+  chmod 0600 "$BASE_STAGE/baseline-created"
+  mkdir -p "$(dirname "$destination")"
+  mv "$BASE_STAGE" "$destination" || { echo "ERROR: no se pudo publicar la copia base completa" >&2; exit 1; }
+}
+with_snapshot() {
+  # Bash locals are dynamically scoped through validation/restoration helpers.
+  local BASE="$1" recovery_journal="$1/recovery-pending"
+  shift
+  "$@"
+}
+
 cleanup() {
   rc=$?
   if [ "$BASELINE_TOUCHED" = 1 ] && [ "$COMMIT" != 1 ]; then
-    echo "ERROR: instalación incompleta; revirtiendo los archivos de la integración" >&2
-    if ! restore_baseline; then
-      echo "ERROR CRÍTICO: reversión automática incompleta; no se ha ocultado el error. Revisión manual requerida: $BASE" >&2
+    echo "ERROR: instalación incompleta; restaurando el estado anterior a esta transacción" >&2
+    if ! with_snapshot "$TRANSACTION" restore_baseline; then
+      echo "ERROR CRÍTICO: reversión automática incompleta; no se ha ocultado el error. Revisión manual requerida: $TRANSACTION" >&2
       rc=1
     fi
-    if [ "$LOCAL_CONFIG_CREATED" = 1 ]; then
-      if ! rm -f "$APP/fan_control/site_config_local.py"; then
-        echo "ERROR CRÍTICO: no se pudo retirar la configuración local creada por esta instalación" >&2
-        rc=1
-      fi
+
+  fi
+  if [ "$TRANSACTION_CREATED" = 1 ] && [ ! -e "$TRANSACTION/recovery-pending" ]; then
+    if ! rm -rf "$TRANSACTION"; then
+      echo "AVISO: copia transaccional sin diario conservada: $TRANSACTION" >&2
+      [ "$COMMIT" = 1 ] || rc=1
     fi
   fi
-  rm -rf "$TMP" || { echo "ERROR: no se pudo limpiar el temporal $TMP" >&2; rc=1; }
+  if ! rm -rf "$TMP"; then
+    echo "AVISO: no se pudo limpiar el temporal $TMP" >&2
+    [ "$COMMIT" = 1 ] || rc=1
+  fi
   return "$rc"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
-for guarded_path in "$P" "$P/backup" "$BASE" "$BASE/recovery-pending" "$WRAPPER" "$HELPER" "$PAGE" "$PAGE_ENTRY" "$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS" "$APP/fan_control/site_config_local.py"; do
+for guarded_path in "$P" "$P/backup" "$BASE" "$BASE/recovery-pending" "$WRAPPER" "$HELPER" "$PAGE" "$PAGE_ENTRY" "$PAGE_ICON" "$STARTUP_EVENT" "$SUDOERS" "$APP/fan_control/site_config_local.py" "$TRANSACTION" "$TRANSACTION/recovery-pending" "$P/backup/.lifecycle.lock"; do
   assert_no_symlink_path "$guarded_path"
 done
 validate_recovery_journal "$BASE/recovery-pending"
 mkdir -p "$P" "$P/logs" "$P/backup"
+# Shared by installer and uninstaller. Keep this inode after releasing the lock.
+command -v flock >/dev/null 2>&1 || { echo "ERROR: falta flock; no se instala" >&2; exit 1; }
+(umask 077; : >> "$P/backup/.lifecycle.lock")
+exec 9>>"$P/backup/.lifecycle.lock"
+flock -n 9 || { echo "ERROR: hay otra operación del plugin en curso" >&2; exit 1; }
+validate_recovery_journal "$TRANSACTION/recovery-pending"
+if [ -e "$BASE/recovery-pending" ] && [ -e "$TRANSACTION/recovery-pending" ]; then
+  echo "ERROR: diarios de instalación y desinstalación simultáneos; revisión requerida" >&2
+  exit 1
+fi
+# A journal from another candidate must be handled by its matching installer.
+pending_journals="$(find "$P/backup" -name recovery-pending -print)" || { echo "ERROR: no se pudieron comprobar los diarios" >&2; exit 1; }
+while IFS= read -r pending; do
+  [ -n "$pending" ] || continue
+  case "$pending" in "$BASE/recovery-pending"|"$TRANSACTION/recovery-pending") ;;
+    *) echo "ERROR: recuperación pendiente de otro candidato: $pending" >&2; exit 1 ;;
+  esac
+done <<< "$pending_journals"
+if [ -e "$TRANSACTION/recovery-pending" ] || [ -e "$BASE/recovery-pending" ]; then
+  if pgrep -f -- "$APP/rp2040_fan_control_webui_dev.py" >/dev/null 2>&1; then
+    echo "ERROR: daemon activo; no se restaura una recuperación pendiente" >&2
+    exit 1
+  fi
+fi
+if [ -e "$TRANSACTION" ]; then
+  with_snapshot "$TRANSACTION" validate_baseline
+  if [ -e "$TRANSACTION/recovery-pending" ]; then
+    grep -qx 'source=installer' "$TRANSACTION/recovery-pending" || { echo "ERROR: origen de transacción inesperado" >&2; exit 1; }
+    echo "AVISO: recuperación de transacción pendiente; se restaura el estado anterior."
+    with_snapshot "$TRANSACTION" restore_baseline
+    rm -rf "$TRANSACTION"
+    echo "Transacción recuperada y verificada. Ejecuta la instalación por separado."
+    exit 1
+  fi
+  # No destination is changed before the journal exists. A journal-free snapshot
+  # is either a prepared transaction or an already committed/recovered one.
+  rm -rf "$TRANSACTION"
+fi
 if [ -e "$BASE/recovery-pending" ] || [ -L "$BASE/recovery-pending" ]; then
   echo "AVISO: se detectó recuperación pendiente; se intentará restaurar antes de cualquier instalación nueva."
   restore_baseline || { echo "ERROR CRÍTICO: recuperación pendiente no completada; diario conservado: $BASE/recovery-pending" >&2; exit 1; }
@@ -252,54 +354,13 @@ visudo -cf "$SRC_SUDOERS" >/dev/null 2>&1 || { echo "ERROR: reglas sudoers del p
 # Capture the baseline in a private staging directory. Publish the marker only after
 # every backup has been copied and compared successfully; never trust a partial baseline.
 if [ ! -f "$BASE/baseline-created" ]; then
-  [ ! -e "$BASE" ] || { echo "ERROR: existe una copia base sin marcador; no se sobrescribe: $BASE" >&2; exit 1; }
-  BASE_STAGE="$TMP/baseline"
-  mkdir -p "$BASE_STAGE/files"
-  : > "$BASE_STAGE/manifest"
-  backup_path() {
-    key="$1"; dest="$2"
-    if [ -e "$dest" ]; then
-      [ -f "$dest" ] || { echo "ERROR: la ruta existente no es un archivo regular: $dest" >&2; return 1; }
-      mkdir -p "$BASE_STAGE/files/$(dirname "$key")"
-      cp -p "$dest" "$BASE_STAGE/files/$key" || return 1
-      cmp -s "$dest" "$BASE_STAGE/files/$key" || { echo "ERROR: la copia no coincide con el original: $dest" >&2; return 1; }
-      printf 'EXISTING\t%s\n' "$key" >> "$BASE_STAGE/manifest"
-    else
-      printf 'NEW\t%s\n' "$key" >> "$BASE_STAGE/manifest"
-    fi
-  }
-  backup_path usr/local/sbin/rp2040-fan-control "$WRAPPER"
-  backup_path usr/local/sbin/rp2040-fan-control-webui "$HELPER"
-  backup_path usr/local/emhttp/plugins/rp2040-fan-control/pages/index.php "$PAGE"
-backup_path usr/local/emhttp/plugins/rp2040-fan-control/RP2040FanControl.page "$PAGE_ENTRY"
-backup_path usr/local/emhttp/plugins/rp2040-fan-control/images/fan.png "$PAGE_ICON"
-backup_path usr/local/emhttp/plugins/rp2040-fan-control/event/startup/rp2040-autostart "$STARTUP_EVENT"
-  backup_path etc/sudoers.d/rp2040-fan-control-webui "$SUDOERS"
-  while IFS= read -r -d '' src; do
-    rel="${src#"$SRC_APP"/}"
-    [ "$rel" = "fan_control/site_config_local.py" ] && continue
-    dest="$APP/$rel"
-    if [ -e "$dest" ]; then
-      [ -f "$dest" ] || { echo "ERROR: la ruta existente no es un archivo regular: $dest" >&2; exit 1; }
-      mkdir -p "$BASE_STAGE/files/app/$(dirname "$rel")"
-      cp -p "$dest" "$BASE_STAGE/files/app/$rel" || { echo "ERROR: no se pudo copiar $dest" >&2; exit 1; }
-      cmp -s "$dest" "$BASE_STAGE/files/app/$rel" || { echo "ERROR: la copia no coincide con el original: $dest" >&2; exit 1; }
-      printf 'EXISTING_APP\t%s\n' "$rel" >> "$BASE_STAGE/manifest"
-    else
-      printf 'NEW_APP\t%s\n' "$rel" >> "$BASE_STAGE/manifest"
-    fi
-  done < <(find "$SRC_APP" -type f -print0)
-  chmod 0700 "$BASE_STAGE" "$BASE_STAGE/files"
-  chmod 0600 "$BASE_STAGE/manifest"
-  ( cd "$BASE_STAGE" && { sha256sum manifest; find files -type f -print0 | sort -z | xargs -0 -r sha256sum; } > SHA256SUMS ) || { echo "ERROR: no se pudo generar SHA256SUMS; no se publica la copia base" >&2; exit 1; }
-  chmod 0600 "$BASE_STAGE/SHA256SUMS"
-  ( cd "$BASE_STAGE" && sha256sum -c SHA256SUMS >/dev/null ) || { echo "ERROR: la copia base temporal no supera SHA-256" >&2; exit 1; }
-  : > "$BASE_STAGE/baseline-created"
-  chmod 0600 "$BASE_STAGE/baseline-created"
-  mkdir -p "$(dirname "$BASE")"
-  mv "$BASE_STAGE" "$BASE" || { echo "ERROR: no se pudo publicar la copia base completa" >&2; exit 1; }
+  capture_snapshot "$BASE"
 fi
+capture_snapshot "$TRANSACTION"
+TRANSACTION_CREATED=1
+with_snapshot "$TRANSACTION" validate_baseline
 validate_baseline
+recovery_journal="$TRANSACTION/recovery-pending"
 BASELINE_TOUCHED=1
 # Record the transaction BEFORE the first destination mutation. If power is lost mid-install,
 # the next invocation must restore the baseline instead of continuing over a mixed state.
@@ -336,21 +397,12 @@ install -m 0644 "$SRC_PAGE_ENTRY" "$PAGE_ENTRY"
 mkdir -p "$(dirname "$PAGE_ICON")"
 install -m 0644 "$SRC_PAGE_ICON" "$PAGE_ICON"
 mkdir -p "$(dirname "$STARTUP_EVENT")"
-mkdir -p "$(dirname "$STARTUP_EVENT")"
 install -m 0755 "$SRC_STARTUP_EVENT" "$STARTUP_EVENT"
 # Install sudoers drop-in, then validate the complete policy. Restore prior file on any validation failure.
 mkdir -p "$(dirname "$SUDOERS")"
 install -m 0440 "$SRC_SUDOERS" "$SUDOERS"
 if ! visudo -c >/dev/null 2>&1; then
   echo "ERROR: validación global de sudoers falló; restaurando la regla anterior" >&2
-  if awk -F '\t' '$1=="EXISTING" && $2=="etc/sudoers.d/rp2040-fan-control-webui" {found=1} END {exit !found}' "$BASE/manifest"; then
-    cp -p "$BASE/files/etc/sudoers.d/rp2040-fan-control-webui" "$SUDOERS" || { echo "ERROR CRÍTICO: no se pudo restaurar el sudoers anterior; revisa $BASE/files/etc/sudoers.d/rp2040-fan-control-webui" >&2; exit 1; }
-  elif awk -F '\t' '$1=="NEW" && $2=="etc/sudoers.d/rp2040-fan-control-webui" {found=1} END {exit !found}' "$BASE/manifest"; then
-    rm -f "$SUDOERS" || { echo "ERROR CRÍTICO: no se pudo retirar el sudoers nuevo" >&2; exit 1; }
-  else
-    echo "ERROR CRÍTICO: el manifiesto no identifica el estado previo de sudoers" >&2
-    exit 1
-  fi
   exit 1
 fi
 # Confirm the web user can invoke only a non-mutating helper action.
@@ -362,6 +414,7 @@ chmod 0700 "$P/backup" "$BASE" "$BASE/files"
 chmod 0600 "$BASE/manifest" "$BASE/SHA256SUMS" "$BASE/baseline-created"
 # Installation is committed only after every file and policy check passed. Removing the
 # journal is the final durable step; if it fails, EXIT cleanup attempts a verified rollback.
+sync
 rm -f "$recovery_journal" || { echo "ERROR: no se pudo retirar el diario; instalación no confirmada" >&2; exit 1; }
 sync
 COMMIT=1

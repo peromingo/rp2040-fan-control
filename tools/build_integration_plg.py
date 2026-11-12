@@ -14,6 +14,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+PYSERIAL_LICENSE_SHA256 = 'f91cb9813de6a5b142b8f7f2dede630b5134160aedaeaf55f4d6a7e2593ca3f3'
 WHEEL_NAME = 'pyserial-3.5-py2.py3-none-any.whl'
 WHEEL_SHA256 = 'c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0'
 WHEEL_URL = 'https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/' + WHEEL_NAME
@@ -53,6 +54,11 @@ def source_files(root=ROOT):
     for name in ['rp2040-fan-control', 'rp2040-fan-control-webui']:
         files['usr/local/sbin/' + name] = ('plugin/scripts/' + name, 0o755)
     files['etc/sudoers.d/rp2040-fan-control-webui'] = ('plugin/src/etc/sudoers.d/rp2040-fan-control-webui', 0o440)
+    files[APP + 'LICENSES/project-MIT.txt'] = ('LICENSE', 0o644)
+    files[APP + 'LICENSES/pyserial-3.5-BSD-3-Clause.txt'] = ('third_party/pyserial/LICENSE.txt', 0o644)
+    files[APP + 'THIRD_PARTY_NOTICES.md'] = ('THIRD_PARTY_NOTICES.md', 0o644)
+    if digest((root / 'third_party/pyserial/LICENSE.txt').read_bytes()) != PYSERIAL_LICENSE_SHA256:
+        raise ValueError('pyserial license checksum mismatch')
     for _, (rel, _) in files.items():
         if (root / rel).is_symlink() or not (root / rel).is_file():
             raise ValueError('Source is missing or is a symlink: ' + rel)
@@ -120,8 +126,8 @@ def render_plg(payload, root=ROOT):
             raise ValueError('Unresolved installer placeholder')
         blocks.append(block)
     text = ('<?xml version="1.0"?>\n'
-            '<PLUGIN name="RP2040 SATA HAT Fan Control" author="peromingo" version="' + version + '" launch="Settings/RP2040FanControl">\n'
-            '<CHANGES>\nSource-built review candidate: JSON and serial configuration, live WebUI, protected instance locking, persistent Python selection and opt-in startup restoration. Firmware does not return serial ACK.\n</CHANGES>\n'
+            '<PLUGIN name="rp2040-fan-control" author="peromingo" version="' + version + '" launch="Settings/RP2040FanControl" pluginURL="https://raw.githubusercontent.com/peromingo/rp2040-fan-control/source-tree-review/plugin/channels/preview/rp2040-fan-control-webui-integration-serial-v2-auditfix19.plg">\n'
+            '<CHANGES>\nSource-built review candidate: JSON and serial configuration, live WebUI, protected instance locking, persistent Python selection, opt-in startup restoration, per-install rollback snapshots and bundled MIT/BSD licenses. Firmware does not return serial ACK.\n</CHANGES>\n'
             '<FILE Run="/bin/bash"><INLINE><![CDATA[' + blocks[0] + ']]></INLINE></FILE>\n'
             '<FILE Run="/bin/bash" Method="remove"><INLINE><![CDATA[' + blocks[1] + ']]></INLINE></FILE>\n</PLUGIN>\n')
     return text.encode(), blocks

@@ -50,3 +50,12 @@ Actualizada: 2026-11-12. Estado actual: **0.8.0-source-rc2 publicada como prerel
 - [ ] Definir y verificar la URL del canal estable, su versión y sus notas de publicación.
 
 La comprobación de CI debe repetirse sobre el commit que se vaya a aprobar. Ni la prerelease ni esta lista autorizan por sí mismas una promoción a estable.
+
+## Seguimiento RC3 (2026-11-13)
+
+- Autoría del código propio y permiso de distribución MIT confirmados por el autor.
+- Licencias MIT y BSD de pyserial incorporadas al paquete fuente RC3.
+- Corrección de recuperación por instalación y bloqueo de operaciones preparada.
+- La validación de RC2 no se atribuye automáticamente a RC3. Véase
+  [VALIDATION-RC3.md](VALIDATION-RC3.md) para sus pruebas pendientes.
+- Release RC2 y canal preview conservados; publicación estable pendiente.

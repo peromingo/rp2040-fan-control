@@ -1,12 +1,32 @@
 # Diseño del instalador de Unraid
 
-Actualizado: 2026-11-12. El PLG **0.8.0-source-rc2** está publicado como prerelease y su ciclo de instalación, actualización, desinstalación y arranque tiene el alcance descrito en [VALIDATION-STATUS.md](VALIDATION-STATUS.md).
+Actualizado: 2026-11-13. El PLG **0.8.0-source-rc2** está publicado como prerelease y su ciclo de instalación, actualización, desinstalación y arranque tiene el alcance descrito en [VALIDATION-STATUS.md](VALIDATION-STATUS.md).
 
 ## Implementación actual
 
 tools/build_integration_plg.py genera el instalador autocontenido a partir de src/unraid, plugin/src, plugin/scripts y las plantillas de plugin/templates. El payload incluye pyserial 3.5 fijado por SHA-256 y un manifiesto de construcción. El verificador compara archivos, permisos y bloques ejecutables con sus fuentes.
 
 tools/prepare_update_manifest.py prepara la variante preview publicada, modificando solo nombre interno y pluginURL. La versión y los bloques ejecutables se conservan. Los prototipos plugin/rp2040-fan-control.plg.in, tools/render_unraid_plg.py y tools/build_unraid_payload.sh se mantienen como referencia histórica; no son la vía de generación de RC2.
+
+## Recuperación transaccional de RC3
+
+RC3 separa la copia histórica de desinstalación de la copia del estado inmediatamente
+anterior a cada instalación. Esta última se guarda en `<copia-base>.transaction`.
+Un fallo de actualización restaura esa transacción, aunque la copia histórica siga
+marcando algunos archivos como nuevos. La copia histórica permanece intacta.
+
+El instalador y el desinstalador comparten `backup/.lifecycle.lock` mediante `flock`;
+no se elimina el archivo de bloqueo al terminar. Una operación concurrente se rechaza.
+Si una interrupción deja `recovery-pending` dentro de la transacción, el instalador
+correspondiente verifica y restaura esa copia y exige repetir la instalación por
+separado. El desinstalador rechaza esa recuperación pendiente. Un diario de otro
+candidato también bloquea la operación y debe tratarse con su versión correspondiente.
+No debe eliminarse manualmente el diario para continuar.
+
+RC3 incluye también las licencias MIT del proyecto y BSD de pyserial en
+`app/LICENSES/`, junto con `app/THIRD_PARTY_NOTICES.md`. El constructor verifica
+la huella de la licencia BSD original. El código propio y su licencia MIT han sido
+confirmados por el autor; las licencias de terceros se conservan por separado.
 
 ## Rutas
 
@@ -42,7 +62,7 @@ La limpieza manual del candidato antiguo realizada para preparar una instalació
 
 ## Dependencias y permisos
 
-Python 3, smartctl y timeout deben estar disponibles en el sistema. El plugin incluye pyserial bajo app/vendor y no instala Python ni ejecuta pip sobre el sistema Unraid. Se han detectado correctamente las dependencias en el entorno de prueba; no se presupone su presencia en todos los equipos.
+Python 3, smartctl, timeout y flock deben estar disponibles en el sistema. El plugin incluye pyserial bajo app/vendor y no instala Python ni ejecuta pip sobre el sistema Unraid. Se han detectado correctamente las dependencias en el entorno de prueba; no se presupone su presencia en todos los equipos.
 
 El wrapper ofrece check-deps, que informa del intérprete, la importación de pyserial y smartctl sin abrir el puerto del RP2040. RP2040_PYTHON permite elegir el intérprete de una invocación; python-path guarda una ruta absoluta y se lee como datos, no como código shell.
 

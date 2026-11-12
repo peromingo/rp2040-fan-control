@@ -8,6 +8,10 @@ for name,body in {'sudo':'exit 0','visudo':'exit 0','sync':'exit 0','pgrep':'[ "
 if sys.platform == 'darwin':
  for name,body in {'base64':'#!/bin/sh\n[ "$1" = -d ] && shift\nexec /usr/bin/base64 -D -i "$1"\n','timeout':'#!/bin/sh\nshift\nexec "$@"\n'}.items():
   f=shim/name;f.write_text(body);f.chmod(0o755)
+if not shutil.which('flock'):
+ p=shim/'flock'
+ p.write_text('#!'+sys.executable+'\nimport fcntl,sys\ntry: fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX|fcntl.LOCK_NB)\nexcept BlockingIOError: sys.exit(1)\n')
+ p.chmod(0o755)
 env=dict(os.environ,PATH=str(shim)+':'+os.environ['PATH'],TMPDIR=tmpdir)
 
 def run(block,root,ok=True,extra=None):

@@ -79,3 +79,9 @@ La limpieza de candidatos y borradores antiguos es opcional. Debe conservar las 
 - La auditoría estructural automatizada no certifica ausencia de secretos ni derechos de publicación.
 
 Consulta también la [lista de tareas de publicación](PUBLICATION-CHECKLIST.md), el [procedimiento de publicación](GITHUB-PUBLICATION.md) y la [revisión de correspondencia del paquete](SOURCE-PACKAGE-REVIEW.md).
+
+## Candidato posterior: RC3
+
+La preparación de RC3 y sus comprobaciones pendientes se siguen por separado en
+[VALIDATION-RC3.md](VALIDATION-RC3.md). Los resultados de RC2 de este documento no
+se atribuyen a RC3 sin repetir las pruebas afectadas.
